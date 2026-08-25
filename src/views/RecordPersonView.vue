@@ -188,10 +188,10 @@ const handleSubmit = async () => {
                   branch === 'Gbaggivilla' ? 'text-[#D4AF37]' : 'text-white',
                 ]"
               >
-                Gbaggivilla
+                Gbagyivilla
               </p>
 
-              <p class="mt-1 text-xs text-gray-500">Gbaggivilla Branch</p>
+              <p class="mt-1 text-xs text-gray-500">Gbagyivilla center</p>
             </button>
           </div>
         </div>

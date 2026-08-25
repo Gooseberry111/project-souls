@@ -700,7 +700,7 @@ onMounted(() => {
                 {{ outing.location }}
               </p>
 
-              <p class="mt-1 text-xs text-gray-600">Branch</p>
+              <p class="mt-1 text-xs text-gray-600">Center</p>
             </div>
 
             <!-- Arrow -->
