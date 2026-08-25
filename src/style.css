@@ -78,7 +78,13 @@ textarea:focus,
 select:focus {
   outline: none;
 }
-
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
 /* =========================================================
    LINKS
 ========================================================= */
