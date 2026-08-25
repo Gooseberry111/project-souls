@@ -146,7 +146,7 @@ const handleSubmit = async () => {
         <!-- Branch -->
         <div class="mb-8">
           <label class="mb-3 block text-sm font-semibold text-gray-300">
-            Select branch
+            Select center
           </label>
 
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -169,7 +169,7 @@ const handleSubmit = async () => {
                 Barnawa
               </p>
 
-              <p class="mt-1 text-xs text-gray-500">Barnawa Branch</p>
+              <p class="mt-1 text-xs text-gray-500">Barnawa Center</p>
             </button>
 
             <button
