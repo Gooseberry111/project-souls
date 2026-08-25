@@ -52,12 +52,42 @@ export const useAuthStore = defineStore("auth", {
         return;
       }
 
+      /*
+       * SPECIAL EMAILS
+       * Replace these with the real church emails.
+       */
+
+      const pastorEmails = ["kelvinherogod@gmail.com"];
+
+      const coordinatorEmails = [
+        "udembaugochukwu09@gmail.com",
+        "uzomaka22@gmail.com",
+      ];
+
+      const userEmail = this.user.email?.toLowerCase() || "";
+
+      const isPastor = pastorEmails.some(
+        (email) => email.toLowerCase() === userEmail,
+      );
+
+      const isCoordinator = coordinatorEmails.some(
+        (email) => email.toLowerCase() === userEmail,
+      );
+
       const { data: newProfile, error: createError } = await supabase
         .from("profiles")
         .insert({
           id: this.user.id,
+
           full_name: this.user.user_metadata?.full_name || "",
+
           phone: this.user.user_metadata?.phone || "",
+
+          role: isPastor ? "pastor" : isCoordinator ? "coordinator" : "member",
+
+          is_pastor: isPastor,
+
+          is_first_timer_coordinator: isCoordinator,
         })
         .select()
         .single();
@@ -86,6 +116,7 @@ export const useAuthStore = defineStore("auth", {
 
       this.profile = data;
     },
+
     async signUp(email, password, fullName, phone) {
       const { data, error } = await supabase.auth.signUp({
         email,
