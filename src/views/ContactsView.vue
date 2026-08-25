@@ -1492,9 +1492,9 @@ onMounted(async () => {
     ====================================================== -->
 
     <nav
-      class="fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-[#0D0D0D]/95 backdrop-blur lg:hidden"
+      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl"
     >
-      <div class="grid grid-cols-4">
+      <div class="grid grid-cols-4 px-2 py-2">
         <button
           type="button"
           @click="router.push('/dashboard')"

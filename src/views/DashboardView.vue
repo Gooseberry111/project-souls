@@ -711,9 +711,9 @@ onMounted(() => {
 
     <!-- Mobile Navigation -->
     <nav
-      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-black/30 backdrop-blur-2xl shadow-2xl lg:hidden"
+      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl"
     >
-      <div class="grid grid-cols-4">
+      <div class="grid grid-cols-4 px-2 py-2">
         <!-- Home -->
         <button
           type="button"
