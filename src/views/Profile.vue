@@ -290,7 +290,9 @@ onMounted(() => {
         <p class="text-sm font-semibold text-[#D4AF37]">Church</p>
 
         <div class="mt-4 rounded-2xl border border-white/10 bg-[#101010] p-5">
-          <p class="font-semibold">Transfiguration Church</p>
+          <p class="font-semibold">
+            Transfiguration Gospel Church International
+          </p>
           <p class="mt-1 text-sm text-gray-500">Evangelism Management</p>
         </div>
       </section>

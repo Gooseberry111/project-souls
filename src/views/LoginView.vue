@@ -17,9 +17,21 @@ const handleLogin = async () => {
 
   try {
     await authStore.signIn(email.value, password.value);
+
+    // Make sure we have the latest profile
+    await authStore.fetchProfile();
+
+    // New users must select a team before entering the dashboard
+    if (!authStore.profile?.team) {
+      router.push("/team-selection");
+      return;
+    }
+
+    // Existing users go directly to the dashboard
     router.push("/dashboard");
   } catch (err) {
-    error.value = err.message;
+    console.error("Login error:", err);
+    error.value = err.message || "Unable to sign in.";
   } finally {
     loading.value = false;
   }
@@ -37,6 +49,7 @@ const handleLogin = async () => {
       <div
         class="absolute -left-32 -top-32 h-96 w-96 rounded-full border border-[#D4AF37]/20"
       ></div>
+
       <div
         class="absolute -bottom-40 -right-32 h-[500px] w-[500px] rounded-full border border-[#D4AF37]/10"
       ></div>
@@ -109,6 +122,7 @@ const handleLogin = async () => {
         </div>
 
         <form @submit.prevent="handleLogin" class="space-y-5">
+          <!-- Email -->
           <div>
             <label class="mb-2 block text-sm font-medium text-gray-300">
               Email address
@@ -118,11 +132,13 @@ const handleLogin = async () => {
               v-model="email"
               type="email"
               required
+              autocomplete="email"
               placeholder="you@example.com"
               class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-sm text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
             />
           </div>
 
+          <!-- Password -->
           <div>
             <label class="mb-2 block text-sm font-medium text-gray-300">
               Password
@@ -132,11 +148,13 @@ const handleLogin = async () => {
               v-model="password"
               type="password"
               required
+              autocomplete="current-password"
               placeholder="Enter your password"
               class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-sm text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
             />
           </div>
 
+          <!-- Error -->
           <div
             v-if="error"
             class="rounded-xl border border-red-900/50 bg-red-950/30 px-4 py-3 text-sm text-red-400"
@@ -144,10 +162,11 @@ const handleLogin = async () => {
             {{ error }}
           </div>
 
+          <!-- Submit -->
           <button
             type="submit"
             :disabled="loading"
-            class="w-full rounded-xl bg-[#D4AF37] px-4 py-3.5 text-sm font-black text-black transition hover:bg-[#E2C45A] disabled:opacity-50"
+            class="w-full rounded-xl bg-[#D4AF37] px-4 py-3.5 text-sm font-black text-black transition hover:bg-[#E2C45A] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {{ loading ? "Signing in..." : "Sign in" }}
           </button>
@@ -157,6 +176,7 @@ const handleLogin = async () => {
           Don't have an account?
 
           <button
+            type="button"
             @click="router.push('/signup')"
             class="ml-1 font-bold text-[#D4AF37] hover:text-[#E2C45A]"
           >

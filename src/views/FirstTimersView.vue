@@ -28,7 +28,10 @@ const form = ref({
 });
 
 const canAdd = computed(() => {
-  return authStore.profile?.is_first_timer_coordinator === true;
+  return (
+    authStore.profile?.is_pastor === true ||
+    authStore.profile?.is_first_timer_coordinator === true
+  );
 });
 
 /*
@@ -99,7 +102,7 @@ const saveFirstTimers = async () => {
   error.value = "";
 
   if (!form.value.branch) {
-    error.value = "Please select a branch.";
+    error.value = "Please select a center.";
     return;
   }
 
@@ -216,6 +219,31 @@ const formatPersonDate = (date) => {
   });
 };
 
+const normalizePhone = (phone) => {
+  if (!phone) return "";
+
+  return phone.replace(/[^\d+]/g, "");
+};
+
+const callPerson = (phone) => {
+  if (!phone) return;
+
+  window.location.href = `tel:${normalizePhone(phone)}`;
+};
+
+const textPerson = (phone) => {
+  if (!phone) return;
+
+  window.location.href = `sms:${normalizePhone(phone)}`;
+};
+
+const whatsappPerson = (phone) => {
+  if (!phone) return;
+
+  const cleaned = normalizePhone(phone).replace("+", "");
+
+  window.open(`https://wa.me/${cleaned}`, "_blank");
+};
 onMounted(() => {
   loadFirstTimers();
 });
@@ -278,7 +306,7 @@ onMounted(() => {
           <label
             class="mb-2 block text-xs font-semibold uppercase tracking-wide text-gray-500"
           >
-            Branch
+            Center
           </label>
 
           <select
@@ -438,12 +466,14 @@ onMounted(() => {
             class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
           >
             <div class="flex gap-3">
+              <!-- Avatar -->
               <div
                 class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#D4AF37]/10 font-bold text-[#D4AF37]"
               >
                 {{ person.full_name?.charAt(0)?.toUpperCase() }}
               </div>
 
+              <!-- Details -->
               <div class="min-w-0 flex-1">
                 <h3 class="font-bold">
                   {{ person.full_name }}
@@ -468,6 +498,36 @@ onMounted(() => {
                 <p class="mt-3 text-xs text-gray-600">
                   Added {{ formatPersonDate(person.created_at) }}
                 </p>
+
+                <!-- Actions -->
+                <div class="mt-4 grid grid-cols-3 gap-2">
+                  <!-- Call -->
+                  <button
+                    type="button"
+                    @click="callPerson(person.phone)"
+                    class="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs font-semibold text-gray-300 transition hover:border-[#D4AF37]/40 hover:bg-[#D4AF37]/10 hover:text-[#D4AF37]"
+                  >
+                    Call
+                  </button>
+
+                  <!-- Text -->
+                  <button
+                    type="button"
+                    @click="textPerson(person.phone)"
+                    class="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs font-semibold text-gray-300 transition hover:border-[#D4AF37]/40 hover:bg-[#D4AF37]/10 hover:text-[#D4AF37]"
+                  >
+                    Text
+                  </button>
+
+                  <!-- WhatsApp -->
+                  <button
+                    type="button"
+                    @click="whatsappPerson(person.phone)"
+                    class="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs font-semibold text-gray-300 transition hover:border-[#D4AF37]/40 hover:bg-[#D4AF37]/10 hover:text-[#D4AF37]"
+                  >
+                    WhatsApp
+                  </button>
+                </div>
               </div>
             </div>
           </article>

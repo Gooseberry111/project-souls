@@ -1029,16 +1029,16 @@ onMounted(async () => {
 
             <div>
               <label class="mb-2 block text-xs font-semibold text-gray-500">
-                Branch
+                Center
               </label>
 
               <select
                 v-model="branchFilter"
                 class="w-full rounded-xl border border-white/10 bg-[#0B0B0B] px-4 py-3 text-sm text-white outline-none focus:border-[#D4AF37]"
               >
-                <option value="All">All branches</option>
+                <option value="All">All centers</option>
                 <option value="Barnawa">Barnawa</option>
-                <option value="Gbaggivilla">Gbaggivilla</option>
+                <option value="Gbaggivilla">Gbagyivilla</option>
               </select>
             </div>
 
@@ -1051,7 +1051,7 @@ onMounted(async () => {
                 v-model="statusFilter"
                 class="w-full rounded-xl border border-white/10 bg-[#0B0B0B] px-4 py-3 text-sm text-white outline-none focus:border-[#D4AF37]"
               >
-                <option value="All">All statuses</option>
+                <option value="All">All status</option>
                 <option value="New">New</option>
                 <option value="Called">Called</option>
                 <option value="Following Up">Following Up</option>
@@ -1139,7 +1139,7 @@ onMounted(async () => {
 
                   <th class="px-4 py-4 font-semibold">Phone Number</th>
 
-                  <th class="px-4 py-4 font-semibold">Branch</th>
+                  <th class="px-4 py-4 font-semibold">Center</th>
 
                   <th
                     class="cursor-pointer whitespace-nowrap px-4 py-4 font-semibold transition hover:text-[#D4AF37]"

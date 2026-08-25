@@ -128,7 +128,12 @@ const loadTeamRankings = async () => {
     }
 
     teamRankings.value = rankings.sort((a, b) => b.count - a.count);
-    topTeam.value = teamRankings.value[0] || null;
+
+    const teamsWithContacts = teamRankings.value.filter(
+      (team) => team.count > 0,
+    );
+
+    topTeam.value = teamsWithContacts[0] || null;
   } catch (error) {
     console.error("Error loading team rankings:", error);
   }

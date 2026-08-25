@@ -67,7 +67,7 @@ const handleSignup = async () => {
           <p
             class="mb-4 text-sm font-semibold uppercase tracking-[0.25em] text-[#D4AF37]"
           >
-            Transfiguration Church
+            Transfiguration Gospel Church International
           </p>
 
           <h1 class="text-5xl font-black leading-tight">
