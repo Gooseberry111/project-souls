@@ -313,11 +313,11 @@ onMounted(() => {
             v-model="form.branch"
             class="w-full rounded-xl border border-white/10 bg-[#080808] px-4 py-3 text-sm text-white outline-none focus:border-[#D4AF37]/50"
           >
-            <option value="">Select branch</option>
+            <option value="">Select center</option>
 
             <option value="Barnawa">Barnawa</option>
 
-            <option value="Gbaggivilla">Gbaggivilla</option>
+            <option value="Gbaggivilla">Gbagyivilla</option>
           </select>
         </div>
 

@@ -1038,7 +1038,7 @@ onMounted(async () => {
               >
                 <option value="All">All centers</option>
                 <option value="Barnawa">Barnawa</option>
-                <option value="Gbaggivilla">Gbagyivilla</option>
+                <option value="Gbagyivilla">Gbagyivilla</option>
               </select>
             </div>
 
