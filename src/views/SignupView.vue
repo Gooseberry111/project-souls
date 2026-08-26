@@ -71,8 +71,9 @@ const handleSignup = async () => {
           </p>
 
           <h1 class="text-5xl font-black leading-tight">
-            Go out.
-            <span class="text-[#D4AF37]"> Reach souls. </span>
+            Go out ||
+            <span class="text-[#D4AF37]"> Reach souls ||</span>
+            Advance the kingdom.
           </h1>
 
           <p class="mt-6 max-w-md text-gray-400 leading-7">
@@ -127,7 +128,7 @@ const handleSignup = async () => {
               type="text"
               required
               placeholder="Enter your full name"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-sm text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
             />
           </div>
 
@@ -140,7 +141,7 @@ const handleSignup = async () => {
               v-model="phone"
               type="tel"
               placeholder="Enter your phone number"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-sm text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
             />
           </div>
 
@@ -154,7 +155,7 @@ const handleSignup = async () => {
               type="email"
               required
               placeholder="you@example.com"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-sm text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
             />
           </div>
 
@@ -169,7 +170,7 @@ const handleSignup = async () => {
               required
               minlength="6"
               placeholder="Create a password"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-sm text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
             />
 
             <p class="mt-1.5 text-xs text-gray-600">Minimum 6 characters</p>

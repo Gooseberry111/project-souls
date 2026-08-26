@@ -241,7 +241,7 @@ onMounted(() => {
             <input
               v-model="editName"
               type="text"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none focus:border-[#D4AF37]"
+              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-base text-white outline-none focus:border-[#D4AF37]"
             />
           </div>
 
@@ -253,7 +253,7 @@ onMounted(() => {
             <input
               v-model="editPhone"
               type="tel"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none focus:border-[#D4AF37]"
+              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-base text-white outline-none focus:border-[#D4AF37]"
             />
           </div>
 

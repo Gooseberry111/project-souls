@@ -74,7 +74,7 @@ const filteredPeople = computed(() => {
           v-model="search"
           type="search"
           placeholder="Search by name or phone number..."
-          class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-sm text-white outline-none placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+          class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
         />
       </div>
       <!-- Loading -->

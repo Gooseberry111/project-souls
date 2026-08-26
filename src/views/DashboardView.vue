@@ -561,7 +561,7 @@ onMounted(() => {
         </div>
       </section>
       <!-- Team Rankings -->
-      <section class="mt-10">
+      <section v-if="teamRankings.some((team) => team.count > 0)" class="mt-10">
         <div class="mb-5">
           <p class="text-sm font-semibold tracking-wide text-[#D4AF37]">
             Team performance

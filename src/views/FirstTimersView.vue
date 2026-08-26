@@ -354,7 +354,7 @@ onMounted(() => {
                   v-model="person.full_name"
                   type="text"
                   placeholder="Enter full name"
-                  class="w-full rounded-xl border border-white/10 bg-[#101010] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  class="w-full rounded-xl border border-white/10 bg-[#101010] px-4 py-3 text-base text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
                 />
               </div>
 
@@ -368,7 +368,7 @@ onMounted(() => {
                   v-model="person.phone"
                   type="tel"
                   placeholder="Enter phone number"
-                  class="w-full rounded-xl border border-white/10 bg-[#101010] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  class="w-full rounded-xl border border-white/10 bg-[#101010] px-4 py-3 text-base text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
                 />
               </div>
 
@@ -382,7 +382,7 @@ onMounted(() => {
                   v-model="person.invited_by"
                   type="text"
                   placeholder="Name of the person who invited them"
-                  class="w-full rounded-xl border border-white/10 bg-[#101010] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  class="w-full rounded-xl border border-white/10 bg-[#101010] px-4 py-3 text-base text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
                 />
               </div>
 
