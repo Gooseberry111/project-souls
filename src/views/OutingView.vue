@@ -581,7 +581,7 @@ onMounted(() => {
     ====================================================== -->
 
     <nav
-      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl"
+      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl lg:hidden"
     >
       <div class="grid grid-cols-3">
         <!-- Home -->

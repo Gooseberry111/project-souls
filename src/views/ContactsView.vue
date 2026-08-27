@@ -51,6 +51,11 @@ const openFeedback = (contact) => {
   if (!contact) return;
 
   selectedFeedback.value = contact;
+
+  feedbackText.value = contact.notes || "";
+  feedbackStatus.value = contact.status || "New";
+  feedbackError.value = "";
+
   showFeedbackModal.value = true;
 };
 
@@ -111,7 +116,11 @@ const saveFeedback = async () => {
       status: data.status || "New",
     };
 
-    closeFeedback();
+    showFeedbackModal.value = false;
+    selectedFeedback.value = null;
+    feedbackText.value = "";
+    feedbackStatus.value = "New";
+    feedbackError.value = "";
   } catch (err) {
     console.error("Error saving feedback:", err);
 
@@ -185,7 +194,7 @@ const normalizePhoneNumber = (phone) => {
    CALL CONTACT
 ========================================================= */
 
-const callContact = (contact) => {
+const callContact = async (contact) => {
   const phone = normalizePhoneNumber(contact.phone);
 
   if (!phone) {
@@ -193,18 +202,30 @@ const callContact = (contact) => {
     return;
   }
 
-  window.location.href = `tel:${phone}`;
+  try {
+    const { error: updateError } = await supabase
+      .from("contacts")
+      .update({ status: "Called" })
+      .eq("id", contact.id);
 
-  setTimeout(() => {
-    openActionFeedbackPrompt(contact);
-  }, 800);
+    if (updateError) throw updateError;
+
+    contact.status = "Called";
+
+    window.location.href = `tel:${phone}`;
+
+    setTimeout(() => {
+      openActionFeedbackPrompt(contact);
+    }, 800);
+  } catch (err) {
+    console.error("Error updating call status:", err);
+  }
 };
-
 /* =========================================================
    TEXT CONTACT
 ========================================================= */
 
-const textContact = (contact) => {
+const textContact = async (contact) => {
   const phone = normalizePhoneNumber(contact.phone);
 
   if (!phone) {
@@ -212,15 +233,28 @@ const textContact = (contact) => {
     return;
   }
 
-  const message = buildSmsMessage(contact);
+  try {
+    const { error: updateError } = await supabase
+      .from("contacts")
+      .update({ status: "Called" })
+      .eq("id", contact.id);
 
-  const smsUrl = `sms:${phone}?body=${encodeURIComponent(message)}`;
+    if (updateError) throw updateError;
 
-  window.location.href = smsUrl;
+    contact.status = "Called";
 
-  setTimeout(() => {
-    openActionFeedbackPrompt(contact);
-  }, 800);
+    const message = buildSmsMessage(contact);
+
+    const smsUrl = `sms:${phone}?body=${encodeURIComponent(message)}`;
+
+    window.location.href = smsUrl;
+
+    setTimeout(() => {
+      openActionFeedbackPrompt(contact);
+    }, 800);
+  } catch (err) {
+    console.error("Error updating text status:", err);
+  }
 };
 
 /* =========================================================
@@ -1492,7 +1526,7 @@ onMounted(async () => {
     ====================================================== -->
 
     <nav
-      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl"
+      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl lg:hidden"
     >
       <div class="grid grid-cols-4 px-2 py-2">
         <button

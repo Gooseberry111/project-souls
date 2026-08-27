@@ -25,6 +25,8 @@ const handleSignup = async () => {
       phone.value,
     );
 
+    await authStore.signOut();
+
     router.push("/login");
   } catch (err) {
     error.value = err.message;

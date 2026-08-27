@@ -19,10 +19,24 @@ const teamStats = ref([]);
 const branchStats = ref([]);
 const recentFirstTimers = ref([]);
 
+// --- New: additional detail ---
+const statusBreakdown = ref([]);
+const staleNewCount = ref(0);
+const weeklyContacts = ref(0);
+const weeklyOutings = ref(0);
+const topContributors = ref([]);
+
 const responseRate = computed(() => {
   if (!totalContacts.value) return 0;
 
-  return Math.round((calledContacts.value / totalContacts.value) * 100);
+  const called =
+    statusBreakdown.value.find((item) => item.status === "Called")?.count || 0;
+
+  const followingUp =
+    statusBreakdown.value.find((item) => item.status === "Following Up")
+      ?.count || 0;
+
+  return Math.round(((called + followingUp) / totalContacts.value) * 100);
 });
 
 const loadSummary = async () => {
@@ -165,7 +179,11 @@ const loadSummary = async () => {
 
         if (relationError) throw relationError;
 
-        count = relationships?.length || 0;
+        const uniqueContactIds = new Set(
+          (relationships || []).map((item) => item.contact_id),
+        );
+
+        count = uniqueContactIds.size;
       }
 
       branchResults.push({
@@ -175,6 +193,115 @@ const loadSummary = async () => {
     }
 
     branchStats.value = branchResults;
+
+    // --- New: status breakdown ---
+    const statuses = ["New", "Called", "Following Up", "Not Reachable"];
+    const breakdown = [];
+
+    for (const status of statuses) {
+      const { count: statusCount, error: statusError } = await supabase
+        .from("contacts")
+        .select("*", { count: "exact", head: true })
+        .eq("status", status);
+
+      if (statusError) throw statusError;
+
+      breakdown.push({ status, count: statusCount || 0 });
+    }
+
+    statusBreakdown.value = breakdown;
+
+    // --- New: stale "New" contacts (added 3+ days ago, never called) ---
+    const staleCutoff = new Date();
+    staleCutoff.setDate(staleCutoff.getDate() - 3);
+
+    const { count: staleCount, error: staleError } = await supabase
+      .from("contacts")
+      .select("*", { count: "exact", head: true })
+      .eq("status", "New")
+      .lt("created_at", staleCutoff.toISOString());
+
+    if (staleError) throw staleError;
+
+    staleNewCount.value = staleCount || 0;
+
+    // --- New: this week's activity ---
+    const today = new Date();
+    const day = today.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - diff);
+    monday.setHours(0, 0, 0, 0);
+
+    const mondayDate =
+      `${monday.getFullYear()}-` +
+      `${String(monday.getMonth() + 1).padStart(2, "0")}-` +
+      `${String(monday.getDate()).padStart(2, "0")}`;
+
+    const { count: weeklyContactsCount, error: weeklyContactsError } =
+      await supabase
+        .from("contacts")
+        .select("*", { count: "exact", head: true })
+        .gte("created_at", `${mondayDate}T00:00:00`);
+
+    if (weeklyContactsError) throw weeklyContactsError;
+
+    weeklyContacts.value = weeklyContactsCount || 0;
+
+    const { count: weeklyOutingsCount, error: weeklyOutingsError } =
+      await supabase
+        .from("evangelism_outings")
+        .select("*", { count: "exact", head: true })
+        .gte("outing_date", mondayDate);
+
+    if (weeklyOutingsError) throw weeklyOutingsError;
+
+    weeklyOutings.value = weeklyOutingsCount || 0;
+
+    // --- New: top individual contributors ---
+    const { data: allContacts, error: allContactsError } = await supabase
+      .from("contacts")
+      .select("added_by");
+
+    if (allContactsError) throw allContactsError;
+
+    const countsByUser = {};
+
+    for (const contact of allContacts || []) {
+      if (!contact.added_by) continue;
+
+      countsByUser[contact.added_by] =
+        (countsByUser[contact.added_by] || 0) + 1;
+    }
+
+    const topIds = Object.entries(countsByUser)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id]) => id);
+
+    if (topIds.length) {
+      const { data: topProfiles, error: topProfilesError } = await supabase
+        .from("profiles")
+        .select("id, full_name, team")
+        .in("id", topIds);
+
+      if (topProfilesError) throw topProfilesError;
+
+      const profileMap = {};
+      for (const profile of topProfiles || []) {
+        profileMap[profile.id] = profile;
+      }
+
+      topContributors.value = topIds.map((id) => ({
+        id,
+        name: profileMap[id]?.full_name || "Unknown",
+        team: profileMap[id]?.team || "",
+        count: countsByUser[id],
+      }));
+    } else {
+      topContributors.value = [];
+    }
   } catch (err) {
     console.error("Pastor summary error:", err);
     error.value = err.message || "Unable to load pastor summary.";
@@ -274,7 +401,7 @@ onMounted(() => {
           <div
             class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
           >
-            <p class="text-xs text-gray-500 sm:text-sm">Response Rate</p>
+            <p class="text-xs text-gray-500 sm:text-sm">Follow-up Rate</p>
 
             <p class="mt-2 text-2xl font-black text-[#D4AF37]">
               {{ responseRate }}%
@@ -400,6 +527,119 @@ onMounted(() => {
                   {{ formatDate(person.created_at) }}
                 </p>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- New: This Week -->
+        <section class="mt-8">
+          <div class="mb-4">
+            <p class="text-sm font-semibold text-[#D4AF37]">Current week</p>
+
+            <h2 class="mt-1 text-xl font-bold">This Week's Activity</h2>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div
+              class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            >
+              <p class="text-xs text-gray-500 sm:text-sm">Contacts Added</p>
+
+              <p class="mt-2 text-2xl font-black text-[#D4AF37]">
+                {{ weeklyContacts }}
+              </p>
+            </div>
+
+            <div
+              class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            >
+              <p class="text-xs text-gray-500 sm:text-sm">Outings</p>
+
+              <p class="mt-2 text-2xl font-black text-[#D4AF37]">
+                {{ weeklyOutings }}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- New: Status Breakdown -->
+        <section class="mt-8">
+          <div class="mb-4 flex items-end justify-between">
+            <div>
+              <p class="text-sm font-semibold text-[#D4AF37]">
+                Follow-up health
+              </p>
+
+              <h2 class="mt-1 text-xl font-bold">Contact Status Breakdown</h2>
+            </div>
+
+            <div
+              v-if="staleNewCount > 0"
+              class="rounded-full border border-red-900/50 bg-red-950/30 px-3 py-1 text-xs font-semibold text-red-400"
+            >
+              {{ staleNewCount }} uncalled 3+ days
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div
+              v-for="item in statusBreakdown"
+              :key="item.status"
+              class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            >
+              <p class="text-xs text-gray-500 sm:text-sm">
+                {{ item.status }}
+              </p>
+
+              <p class="mt-2 text-2xl font-black text-[#D4AF37]">
+                {{ item.count }}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- New: Top Contributors -->
+        <section class="mt-8">
+          <div class="mb-4">
+            <p class="text-sm font-semibold text-[#D4AF37]">
+              Individual impact
+            </p>
+
+            <h2 class="mt-1 text-xl font-bold">Top Contributors</h2>
+          </div>
+
+          <div
+            v-if="topContributors.length === 0"
+            class="rounded-2xl border border-dashed border-white/10 bg-[#101010] p-6 text-center text-sm text-gray-500"
+          >
+            No contacts recorded yet.
+          </div>
+
+          <div v-else class="space-y-3">
+            <div
+              v-for="(person, index) in topContributors"
+              :key="person.id"
+              class="flex items-center gap-4 rounded-2xl border border-white/10 bg-[#101010] p-4"
+            >
+              <div
+                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#D4AF37]/10 font-black text-[#D4AF37]"
+              >
+                {{ index + 1 }}
+              </div>
+
+              <div class="min-w-0 flex-1">
+                <p class="truncate font-semibold">
+                  {{ person.name }}
+                </p>
+
+                <p class="mt-1 text-xs text-gray-500">
+                  {{ person.team }}
+                </p>
+              </div>
+
+              <p class="shrink-0 text-lg font-black text-[#D4AF37]">
+                {{ person.count }}
+              </p>
             </div>
           </div>
         </section>

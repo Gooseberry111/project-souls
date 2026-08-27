@@ -35,6 +35,7 @@ const loadOutings = async () => {
     const { data, error } = await supabase
       .from("evangelism_outings")
       .select("*")
+      .eq("created_by", authStore.user.id)
       .order("outing_date", { ascending: false });
 
     if (error) throw error;
@@ -49,22 +50,31 @@ const loadOutings = async () => {
 
 const loadStats = async () => {
   try {
+    const userId = authStore.user?.id;
+
+    if (!userId) return;
+
+    // Personal contacts
     const { count: peopleCount, error: peopleError } = await supabase
       .from("contacts")
-      .select("*", { count: "exact", head: true });
+      .select("*", { count: "exact", head: true })
+      .eq("added_by", userId);
 
     if (peopleError) throw peopleError;
 
     totalPeople.value = peopleCount || 0;
 
+    // Personal outings
     const { count: outingCount, error: outingError } = await supabase
       .from("evangelism_outings")
-      .select("*", { count: "exact", head: true });
+      .select("*", { count: "exact", head: true })
+      .eq("created_by", userId);
 
     if (outingError) throw outingError;
 
     totalOutings.value = outingCount || 0;
 
+    // Personal contacts this week
     const today = new Date();
     const day = today.getDay();
     const diff = day === 0 ? 6 : day - 1;
@@ -78,15 +88,17 @@ const loadStats = async () => {
     const { count: weeklyCount, error: weeklyError } = await supabase
       .from("contacts")
       .select("*", { count: "exact", head: true })
+      .eq("added_by", userId)
       .gte("created_at", `${mondayDate}T00:00:00`);
 
     if (weeklyError) throw weeklyError;
 
     peopleThisWeek.value = weeklyCount || 0;
   } catch (error) {
-    console.error("Error loading stats:", error);
+    console.error("Error loading personal stats:", error);
   }
 };
+
 const loadTeamRankings = async () => {
   try {
     const teams = [
@@ -101,10 +113,13 @@ const loadTeamRankings = async () => {
     for (const team of teams) {
       const { data: members, error: membersError } = await supabase
         .from("profiles")
-        .select("id")
+        .select("id, full_name, team")
         .eq("team", team);
 
       if (membersError) throw membersError;
+
+      console.log(`TEAM: ${team}`);
+      console.log("MEMBERS:", members);
 
       const memberIds = (members || []).map((member) => member.id);
 
@@ -118,6 +133,8 @@ const loadTeamRankings = async () => {
 
         if (contactsError) throw contactsError;
 
+        console.log(`CONTACT COUNT FOR ${team}:`, contactCount);
+
         count = contactCount || 0;
       }
 
@@ -126,6 +143,8 @@ const loadTeamRankings = async () => {
         count,
       });
     }
+
+    console.log("FINAL RANKINGS:", rankings);
 
     teamRankings.value = rankings.sort((a, b) => b.count - a.count);
 
@@ -716,7 +735,7 @@ onMounted(() => {
 
     <!-- Mobile Navigation -->
     <nav
-      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl"
+      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl lg:hidden"
     >
       <div class="grid grid-cols-4 px-2 py-2">
         <!-- Home -->
