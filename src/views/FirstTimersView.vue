@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -244,6 +246,145 @@ const whatsappPerson = (phone) => {
 
   window.open(`https://wa.me/${cleaned}`, "_blank");
 };
+const exportFirstTimersPdf = () => {
+  if (!selectedFolder.value) return;
+
+  const doc = new jsPDF();
+
+  const gold = [212, 175, 55];
+  const black = [20, 20, 20];
+  const gray = [100, 100, 100];
+  const lightGray = [225, 225, 225];
+
+  // White background
+  doc.setFillColor(255, 255, 255);
+  doc.rect(0, 0, 210, 297, "F");
+
+  // Church logo
+  const logo = new Image();
+
+  logo.onload = () => {
+    doc.addImage(logo, "JPEG", 14, 10, 25, 25);
+
+    // Church name
+    doc.setTextColor(...black);
+    doc.setFontSize(18);
+    doc.setFont("helvetica", "bold");
+    doc.text("TRANSFIGURATION CHURCH", 45, 20);
+
+    // Gold line
+    doc.setDrawColor(...gold);
+    doc.setLineWidth(1);
+    doc.line(45, 24, 196, 24);
+
+    // Motto
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    doc.text("giving you life and reason to live", 45, 31);
+
+    // Report title
+    doc.setTextColor(...black);
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text("FIRST TIMERS REPORT", 14, 47);
+
+    // Branch and date
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${selectedFolder.value.branch} Branch`, 14, 55);
+
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    doc.text(
+      `${formatDate(selectedFolder.value.date)} • ${selectedPeople.value.length} ${
+        selectedPeople.value.length === 1 ? "person" : "people"
+      }`,
+      14,
+      62,
+    );
+
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 68);
+
+    // Divider
+    doc.setDrawColor(...lightGray);
+    doc.setLineWidth(0.4);
+    doc.line(14, 73, 196, 73);
+
+    // First timers table
+    autoTable(doc, {
+      startY: 80,
+      head: [["Name", "Phone", "Invited By", "Notes"]],
+      body: selectedPeople.value.map((person) => [
+        person.full_name || "",
+        person.phone || "",
+        person.invited_by || "Not specified",
+        person.notes || "",
+      ]),
+      theme: "grid",
+
+      styles: {
+        fontSize: 8,
+        textColor: black,
+        lineColor: lightGray,
+        lineWidth: 0.3,
+        cellPadding: 4,
+        overflow: "linebreak",
+      },
+
+      headStyles: {
+        fillColor: gold,
+        textColor: black,
+        fontStyle: "bold",
+      },
+
+      alternateRowStyles: {
+        fillColor: [248, 248, 248],
+      },
+
+      columnStyles: {
+        0: { cellWidth: 42 },
+        1: { cellWidth: 35 },
+        2: { cellWidth: 40 },
+        3: { cellWidth: 65 },
+      },
+    });
+
+    // Footer
+    const pageCount = doc.internal.getNumberOfPages();
+
+    for (let page = 1; page <= pageCount; page++) {
+      doc.setPage(page);
+
+      doc.setDrawColor(...lightGray);
+      doc.setLineWidth(0.3);
+      doc.line(14, 282, 196, 282);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(...gray);
+
+      doc.text("Transfiguration Church • First Timers", 14, 289);
+
+      doc.text(`Page ${page} of ${pageCount}`, 196, 289, { align: "right" });
+    }
+
+    const safeBranch = selectedFolder.value.branch
+      .replace(/\s+/g, "-")
+      .toLowerCase();
+
+    const safeDate = selectedFolder.value.date;
+
+    doc.save(`first-timers-${safeBranch}-${safeDate}.pdf`);
+  };
+
+  logo.onerror = () => {
+    console.error("Unable to load church logo: /TCC.jpeg");
+  };
+
+  logo.src = "/TCC.jpeg";
+};
 onMounted(() => {
   loadFirstTimers();
 });
@@ -449,14 +590,27 @@ onMounted(() => {
             {{ selectedFolder.branch }} Branch
           </p>
 
-          <h2 class="mt-1 text-2xl font-black">First Timers</h2>
+          <div class="mt-1 flex items-start justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-black">First Timers</h2>
 
-          <p class="mt-1 text-sm text-gray-500">
-            {{ formatDate(selectedFolder.date) }}
-            ·
-            {{ selectedPeople.length }}
-            people
-          </p>
+              <p class="mt-1 text-sm text-gray-500">
+                {{ formatDate(selectedFolder.date) }}
+                ·
+                {{ selectedPeople.length }}
+                people
+              </p>
+            </div>
+
+            <button
+              v-if="canAdd"
+              type="button"
+              @click="exportFirstTimersPdf"
+              class="shrink-0 rounded-xl border border-[#D4AF37]/30 bg-[#101010] px-4 py-2 text-sm font-semibold text-[#D4AF37] transition hover:border-[#D4AF37] hover:bg-[#D4AF37]/10"
+            >
+              Export PDF
+            </button>
+          </div>
         </div>
 
         <div class="space-y-3">

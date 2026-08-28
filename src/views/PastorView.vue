@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -320,6 +322,165 @@ const formatDate = (date) => {
   });
 };
 
+const exportPdf = () => {
+  const doc = new jsPDF();
+
+  const gold = [212, 175, 55];
+  const black = [20, 20, 20];
+  const gray = [100, 100, 100];
+  const lightGray = [225, 225, 225];
+
+  const logo = new Image();
+
+  logo.onload = () => {
+    // White page background
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, 210, 297, "F");
+
+    // Church logo
+    doc.addImage(logo, "JPEG", 14, 10, 25, 25);
+
+    // Church name
+    doc.setTextColor(...black);
+    doc.setFontSize(18);
+    doc.setFont("helvetica", "bold");
+    doc.text("TRANSFIGURATION GOSPEL CHURCH INT'L", 45, 20);
+
+    // Gold accent line
+    doc.setDrawColor(...gold);
+    doc.setLineWidth(1);
+    doc.line(45, 24, 196, 24);
+
+    // Motto
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    doc.text("giving you life and reason to live", 45, 31);
+
+    // Report title
+    doc.setTextColor(...black);
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text("PASTOR SUMMARY REPORT", 14, 47);
+
+    // Generated date
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 54);
+
+    // Divider
+    doc.setDrawColor(...lightGray);
+    doc.setLineWidth(0.4);
+    doc.line(14, 59, 196, 59);
+
+    // Reusable table styling
+    const tableStyles = {
+      theme: "grid",
+      styles: {
+        fontSize: 9,
+        textColor: black,
+        lineColor: lightGray,
+        lineWidth: 0.3,
+        cellPadding: 4,
+      },
+      headStyles: {
+        fillColor: gold,
+        textColor: black,
+        fontStyle: "bold",
+        lineColor: gold,
+      },
+      alternateRowStyles: {
+        fillColor: [248, 248, 248],
+      },
+    };
+
+    // Summary metrics
+    autoTable(doc, {
+      startY: 66,
+      head: [["Metric", "Value"]],
+      body: [
+        ["Total Contacts", totalContacts.value],
+        ["Total Outings", totalOutings.value],
+        ["First Timers", firstTimers.value],
+        ["Follow-up Rate", `${responseRate.value}%`],
+        ["Weekly Contacts", weeklyContacts.value],
+        ["Weekly Outings", weeklyOutings.value],
+        ["Stale Contacts", staleNewCount.value],
+      ],
+      ...tableStyles,
+    });
+
+    // Team performance
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 12,
+      head: [["Team", "Contacts", "Called", "Response Rate"]],
+      body: teamStats.value.map((team) => [
+        team.team,
+        team.contacts,
+        team.called,
+        `${team.responseRate}%`,
+      ]),
+      ...tableStyles,
+    });
+
+    // Branch performance
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 12,
+      head: [["Branch", "Contacts"]],
+      body: branchStats.value.map((branch) => [branch.branch, branch.contacts]),
+      ...tableStyles,
+    });
+
+    // Status breakdown
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 12,
+      head: [["Status", "Count"]],
+      body: statusBreakdown.value.map((item) => [item.status, item.count]),
+      ...tableStyles,
+    });
+
+    // Top contributors
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 12,
+      head: [["Name", "Team", "Contacts"]],
+      body: topContributors.value.map((person) => [
+        person.name,
+        person.team,
+        person.count,
+      ]),
+      ...tableStyles,
+    });
+
+    // Footer on every page
+    const pageCount = doc.internal.getNumberOfPages();
+
+    for (let page = 1; page <= pageCount; page++) {
+      doc.setPage(page);
+
+      doc.setDrawColor(...lightGray);
+      doc.setLineWidth(0.3);
+      doc.line(14, 282, 196, 282);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(...gray);
+
+      doc.text("Transfiguration Church • Pastor Summary", 14, 289);
+
+      doc.text(`Page ${page} of ${pageCount}`, 196, 289, { align: "right" });
+    }
+
+    doc.save("transfiguration-church-pastor-summary.pdf");
+  };
+
+  logo.onerror = () => {
+    console.error("Unable to load church logo: /TCC.jpeg");
+  };
+
+  logo.src = "/TCC.jpeg";
+};
+
 onMounted(() => {
   loadSummary();
 });
@@ -345,16 +506,176 @@ onMounted(() => {
         <p class="mt-2 text-sm text-gray-500">
           Church-wide evangelism and follow-up overview.
         </p>
+        <button
+          @click="exportPdf"
+          class="rounded-xl border border-[#D4AF37]/30 bg-[#101010] px-4 py-2 text-sm font-semibold text-[#D4AF37]"
+        >
+          Export PDF
+        </button>
       </div>
     </header>
 
     <main class="mx-auto max-w-7xl px-4 py-6 pb-24 sm:px-6 sm:py-8 lg:px-8">
       <!-- Loading -->
-      <div
-        v-if="loading"
-        class="rounded-2xl border border-white/10 bg-[#101010] p-8 text-center text-sm text-gray-500"
-      >
-        Loading summary...
+      <!-- Loading Skeletons -->
+      <div v-if="loading" class="animate-pulse">
+        <!-- Main Stats -->
+        <section class="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div
+            v-for="i in 4"
+            :key="`stat-skeleton-${i}`"
+            class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+          >
+            <div class="h-3 w-24 rounded bg-white/10"></div>
+            <div class="mt-3 h-8 w-16 rounded bg-white/10"></div>
+          </div>
+        </section>
+
+        <!-- Teams -->
+        <section class="mt-8">
+          <div class="mb-4">
+            <div class="h-4 w-32 rounded bg-white/10"></div>
+            <div class="mt-2 h-6 w-48 rounded bg-white/10"></div>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div
+              v-for="i in 4"
+              :key="`team-skeleton-${i}`"
+              class="rounded-2xl border border-white/10 bg-[#101010] p-5"
+            >
+              <div class="h-4 w-32 rounded bg-white/10"></div>
+              <div class="mt-5 h-8 w-14 rounded bg-white/10"></div>
+              <div class="mt-2 h-3 w-16 rounded bg-white/10"></div>
+
+              <div class="mt-5 flex justify-between">
+                <div class="h-3 w-12 rounded bg-white/10"></div>
+                <div class="h-3 w-8 rounded bg-white/10"></div>
+              </div>
+
+              <div class="mt-3 flex justify-between">
+                <div class="h-3 w-20 rounded bg-white/10"></div>
+                <div class="h-3 w-10 rounded bg-white/10"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Branches -->
+        <section class="mt-8">
+          <div class="mb-4">
+            <div class="h-4 w-36 rounded bg-white/10"></div>
+            <div class="mt-2 h-6 w-48 rounded bg-white/10"></div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div
+              v-for="i in 2"
+              :key="`branch-skeleton-${i}`"
+              class="rounded-2xl border border-white/10 bg-[#101010] p-5"
+            >
+              <div class="h-3 w-20 rounded bg-white/10"></div>
+              <div class="mt-3 h-8 w-14 rounded bg-white/10"></div>
+              <div class="mt-2 h-3 w-16 rounded bg-white/10"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- First Timers -->
+        <section class="mt-8">
+          <div class="mb-4 flex items-end justify-between">
+            <div>
+              <div class="h-4 w-20 rounded bg-white/10"></div>
+              <div class="mt-2 h-6 w-36 rounded bg-white/10"></div>
+            </div>
+
+            <div class="h-3 w-14 rounded bg-white/10"></div>
+          </div>
+
+          <div class="space-y-3">
+            <div
+              v-for="i in 5"
+              :key="`first-timer-skeleton-${i}`"
+              class="rounded-2xl border border-white/10 bg-[#101010] p-4"
+            >
+              <div class="flex items-start justify-between gap-4">
+                <div class="flex-1">
+                  <div class="h-4 w-32 rounded bg-white/10"></div>
+                  <div class="mt-2 h-3 w-24 rounded bg-white/10"></div>
+                </div>
+
+                <div class="h-3 w-20 rounded bg-white/10"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- This Week -->
+        <section class="mt-8">
+          <div class="mb-4">
+            <div class="h-4 w-24 rounded bg-white/10"></div>
+            <div class="mt-2 h-6 w-44 rounded bg-white/10"></div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div
+              v-for="i in 2"
+              :key="`weekly-skeleton-${i}`"
+              class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            >
+              <div class="h-3 w-24 rounded bg-white/10"></div>
+              <div class="mt-3 h-8 w-14 rounded bg-white/10"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Status Breakdown -->
+        <section class="mt-8">
+          <div class="mb-4 flex items-end justify-between">
+            <div>
+              <div class="h-4 w-32 rounded bg-white/10"></div>
+              <div class="mt-2 h-6 w-52 rounded bg-white/10"></div>
+            </div>
+
+            <div class="h-6 w-28 rounded-full bg-white/10"></div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div
+              v-for="i in 4"
+              :key="`status-skeleton-${i}`"
+              class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            >
+              <div class="h-3 w-20 rounded bg-white/10"></div>
+              <div class="mt-3 h-8 w-12 rounded bg-white/10"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Top Contributors -->
+        <section class="mt-8">
+          <div class="mb-4">
+            <div class="h-4 w-32 rounded bg-white/10"></div>
+            <div class="mt-2 h-6 w-40 rounded bg-white/10"></div>
+          </div>
+
+          <div class="space-y-3">
+            <div
+              v-for="i in 5"
+              :key="`contributor-skeleton-${i}`"
+              class="flex items-center gap-4 rounded-2xl border border-white/10 bg-[#101010] p-4"
+            >
+              <div class="h-10 w-10 shrink-0 rounded-xl bg-white/10"></div>
+
+              <div class="min-w-0 flex-1">
+                <div class="h-4 w-32 rounded bg-white/10"></div>
+                <div class="mt-2 h-3 w-24 rounded bg-white/10"></div>
+              </div>
+
+              <div class="h-5 w-8 rounded bg-white/10"></div>
+            </div>
+          </div>
+        </section>
       </div>
 
       <!-- Error -->
