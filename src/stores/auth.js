@@ -61,7 +61,7 @@ export const useAuthStore = defineStore("auth", {
 
       const coordinatorEmails = [
         "udembaugochukwu09@gmail.com",
-        "uzomaka22@gmail.com",
+        "uzomak22@gmail.com",
         "graceukat@gmail.com",
       ];
 

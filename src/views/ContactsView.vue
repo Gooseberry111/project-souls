@@ -154,12 +154,36 @@ const closeActionFeedbackPrompt = () => {
 
 const CHURCH_NAME = "Transfiguration Church";
 
-const buildSmsMessage = (contact) => {
-  const name = contact?.name || "there";
+const BRANCH_MESSAGES = {
+  Barnawa: {
+    venue: "Transfiguration Church, Barnawa Centre",
+  },
 
-  return `Hello ${name}, this is ${CHURCH_NAME}. It was lovely connecting with you. We'd love to invite you to worship with us sometime. God bless you!`;
+  Gbaggivilla: {
+    venue: "Transfiguration Church, Gbagyivilla Centre",
+  },
 };
 
+const buildSmsMessage = (contact) => {
+  const branch = contact?.branch || contact?.location || "";
+
+  if (
+    branch.toLowerCase().includes("gbag") ||
+    branch.toLowerCase().includes("gbayi")
+  ) {
+    return `Good day beloved
+
+You are warmly invited to worship with us at Transfiguration Church on SUNDAY by 8am
+
+@ John Tanko street off Joel Bala Gbayi villa`;
+  }
+
+  return `Good day beloved
+
+You are warmly invited to worship with us at Transfiguration Church on SUNDAY by 8am
+
+@ Chalawa, Opposite millennium suite, Barnawa`;
+};
 /* =========================================================
    PHONE NUMBER
 ========================================================= */
@@ -233,6 +257,14 @@ const textContact = async (contact) => {
     return;
   }
 
+  const branch =
+    contact.branch ||
+    window.prompt(
+      "Which centre would you like to invite this person to?\n\nType:\nBarnawa\nor\nGbaggivilla",
+    );
+
+  if (!branch) return;
+
   try {
     const { error: updateError } = await supabase
       .from("contacts")
@@ -243,7 +275,7 @@ const textContact = async (contact) => {
 
     contact.status = "Called";
 
-    const message = buildSmsMessage(contact);
+    const message = buildSmsMessage(contact, branch);
 
     const smsUrl = `sms:${phone}?body=${encodeURIComponent(message)}`;
 
