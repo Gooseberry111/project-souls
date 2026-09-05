@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
+import { getWeekRange, toDateKey, formatWeekLabel } from "../lib/week";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -14,7 +15,6 @@ const error = ref("");
 
 const totalContacts = ref(0);
 const totalOutings = ref(0);
-const calledContacts = ref(0);
 const firstTimers = ref(0);
 
 const teamStats = ref([]);
@@ -27,6 +27,10 @@ const staleNewCount = ref(0);
 const weeklyContacts = ref(0);
 const weeklyOutings = ref(0);
 const topContributors = ref([]);
+const weekLabel = ref("");
+const teamScope = ref("week");
+const teamStatsLoading = ref(false);
+const exporting = ref(false);
 
 const responseRate = computed(() => {
   if (!totalContacts.value) return 0;
@@ -41,84 +45,37 @@ const responseRate = computed(() => {
   return Math.round(((called + followingUp) / totalContacts.value) * 100);
 });
 
-const loadSummary = async () => {
-  loading.value = true;
-  error.value = "";
+/* =========================================================
+   TEAM STATS
 
-  try {
-    // Total contacts
-    const { count: contactsCount, error: contactsError } = await supabase
-      .from("contacts")
-      .select("*", {
-        count: "exact",
-        head: true,
-      });
+   Scope: "week" (Sat -> Fri, matching the dashboard rankings)
+   or "all" (all time).
+========================================================= */
 
-    if (contactsError) throw contactsError;
+const TEAMS = [
+  "Sent Ones",
+  "Pacesetters",
+  "Soul Harvesters",
+  "Kingdom Harvesters",
+];
 
-    totalContacts.value = contactsCount || 0;
+const BRANCHES = ["Barnawa", "Gbaggivilla"];
 
-    // Total outings
-    const { count: outingsCount, error: outingsError } = await supabase
-      .from("evangelism_outings")
-      .select("*", {
-        count: "exact",
-        head: true,
-      });
+const STATUSES = ["New", "Called", "Following Up", "Not Reachable"];
 
-    if (outingsError) throw outingsError;
+const scopedToWeek = (query) => {
+  const { start, end } = getWeekRange();
 
-    totalOutings.value = outingsCount || 0;
+  return query
+    .gte("created_at", start.toISOString())
+    .lt("created_at", end.toISOString());
+};
 
-    // Called contacts
-    const { count: calledCount, error: calledError } = await supabase
-      .from("contacts")
-      .select("*", {
-        count: "exact",
-        head: true,
-      })
-      .eq("status", "Called");
+const loadTeamStats = async () => {
+  const useWeek = teamScope.value === "week";
 
-    if (calledError) throw calledError;
-
-    calledContacts.value = calledCount || 0;
-
-    // First timers
-    const { count: firstTimerCount, error: firstTimerError } = await supabase
-      .from("first_timers")
-      .select("*", {
-        count: "exact",
-        head: true,
-      });
-
-    if (firstTimerError) throw firstTimerError;
-
-    firstTimers.value = firstTimerCount || 0;
-
-    // Recent first timers
-    const { data: recentData, error: recentError } = await supabase
-      .from("first_timers")
-      .select("*")
-      .order("created_at", {
-        ascending: false,
-      })
-      .limit(5);
-
-    if (recentError) throw recentError;
-
-    recentFirstTimers.value = recentData || [];
-
-    // Teams
-    const teams = [
-      "Sent Ones",
-      "Pacesetters",
-      "Soul Harvesters",
-      "Kingdom Harvesters",
-    ];
-
-    const stats = [];
-
-    for (const team of teams) {
+  const stats = await Promise.all(
+    TEAMS.map(async (team) => {
       const { data: members, error: membersError } = await supabase
         .from("profiles")
         .select("id")
@@ -128,40 +85,70 @@ const loadSummary = async () => {
 
       const memberIds = (members || []).map((member) => member.id);
 
-      let count = 0;
-      let called = 0;
-
-      if (memberIds.length) {
-        const { data: teamContacts, error: teamContactsError } = await supabase
-          .from("contacts")
-          .select("added_by, status")
-          .in("added_by", memberIds);
-
-        if (teamContactsError) throw teamContactsError;
-
-        count = teamContacts?.length || 0;
-
-        called =
-          teamContacts?.filter((contact) => contact.status === "Called")
-            .length || 0;
+      if (!memberIds.length) {
+        return { team, contacts: 0, called: 0, responseRate: 0 };
       }
 
-      stats.push({
+      // Counted server-side: fetching the rows would silently cap at the
+      // 1000-row limit once a team passes that many contacts.
+      const totalQuery = supabase
+        .from("contacts")
+        .select("*", { count: "exact", head: true })
+        .in("added_by", memberIds);
+
+      const calledQuery = supabase
+        .from("contacts")
+        .select("*", { count: "exact", head: true })
+        .in("added_by", memberIds)
+        .eq("status", "Called");
+
+      const [totalResult, calledResult] = await Promise.all([
+        useWeek ? scopedToWeek(totalQuery) : totalQuery,
+        useWeek ? scopedToWeek(calledQuery) : calledQuery,
+      ]);
+
+      if (totalResult.error) throw totalResult.error;
+      if (calledResult.error) throw calledResult.error;
+
+      const contacts = totalResult.count || 0;
+      const called = calledResult.count || 0;
+
+      return {
         team,
-        contacts: count,
+        contacts,
         called,
-        responseRate: count ? Math.round((called / count) * 100) : 0,
-      });
-    }
+        responseRate: contacts ? Math.round((called / contacts) * 100) : 0,
+      };
+    }),
+  );
 
-    teamStats.value = stats;
+  teamStats.value = stats;
+};
 
-    // Branch statistics
-    const branches = ["Barnawa", "Gbaggivilla"];
+const setTeamScope = async (scope) => {
+  if (teamScope.value === scope || teamStatsLoading.value) return;
 
-    const branchResults = [];
+  teamScope.value = scope;
+  teamStatsLoading.value = true;
 
-    for (const branch of branches) {
+  try {
+    await loadTeamStats();
+  } catch (err) {
+    console.error("Team stats error:", err);
+
+    error.value = err.message || "Unable to load team statistics.";
+  } finally {
+    teamStatsLoading.value = false;
+  }
+};
+
+/* =========================================================
+   BRANCH STATS
+========================================================= */
+
+const loadBranchStats = async () => {
+  const results = await Promise.all(
+    BRANCHES.map(async (branch) => {
       const { data: outings, error: branchError } = await supabase
         .from("evangelism_outings")
         .select("id")
@@ -171,141 +158,205 @@ const loadSummary = async () => {
 
       const outingIds = (outings || []).map((outing) => outing.id);
 
-      let count = 0;
-
-      if (outingIds.length) {
-        const { data: relationships, error: relationError } = await supabase
-          .from("outing_contacts")
-          .select("contact_id")
-          .in("outing_id", outingIds);
-
-        if (relationError) throw relationError;
-
-        const uniqueContactIds = new Set(
-          (relationships || []).map((item) => item.contact_id),
-        );
-
-        count = uniqueContactIds.size;
+      if (!outingIds.length) {
+        return { branch, contacts: 0 };
       }
 
-      branchResults.push({
-        branch,
-        contacts: count,
-      });
-    }
+      const { data: relationships, error: relationError } = await supabase
+        .from("outing_contacts")
+        .select("contact_id")
+        .in("outing_id", outingIds);
 
-    branchStats.value = branchResults;
+      if (relationError) throw relationError;
 
-    // --- New: status breakdown ---
-    const statuses = ["New", "Called", "Following Up", "Not Reachable"];
-    const breakdown = [];
+      const uniqueContactIds = new Set(
+        (relationships || []).map((item) => item.contact_id),
+      );
 
-    for (const status of statuses) {
-      const { count: statusCount, error: statusError } = await supabase
+      return { branch, contacts: uniqueContactIds.size };
+    }),
+  );
+
+  branchStats.value = results;
+};
+
+/* =========================================================
+   STATUS BREAKDOWN
+========================================================= */
+
+const loadStatusBreakdown = async () => {
+  const breakdown = await Promise.all(
+    STATUSES.map(async (status) => {
+      const { count, error: statusError } = await supabase
         .from("contacts")
         .select("*", { count: "exact", head: true })
         .eq("status", status);
 
       if (statusError) throw statusError;
 
-      breakdown.push({ status, count: statusCount || 0 });
-    }
+      return { status, count: count || 0 };
+    }),
+  );
 
-    statusBreakdown.value = breakdown;
+  statusBreakdown.value = breakdown;
+};
 
-    // --- New: stale "New" contacts (added 3+ days ago, never called) ---
-    const staleCutoff = new Date();
-    staleCutoff.setDate(staleCutoff.getDate() - 3);
+/* =========================================================
+   TOP CONTRIBUTORS
+========================================================= */
 
-    const { count: staleCount, error: staleError } = await supabase
+const loadTopContributors = async () => {
+  const countsByUser = {};
+
+  // Paged: a plain select caps at 1000 rows, which would quietly
+  // under-count contributors once the church passes that many contacts.
+  const pageSize = 1000;
+  let offset = 0;
+
+  while (true) {
+    const { data: page, error: pageError } = await supabase
       .from("contacts")
-      .select("*", { count: "exact", head: true })
-      .eq("status", "New")
-      .lt("created_at", staleCutoff.toISOString());
+      .select("added_by")
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
 
-    if (staleError) throw staleError;
+    if (pageError) throw pageError;
 
-    staleNewCount.value = staleCount || 0;
-
-    // --- New: this week's activity ---
-    const today = new Date();
-    const day = today.getDay();
-    const diff = day === 0 ? 6 : day - 1;
-
-    const monday = new Date(today);
-    monday.setDate(today.getDate() - diff);
-    monday.setHours(0, 0, 0, 0);
-
-    const mondayDate =
-      `${monday.getFullYear()}-` +
-      `${String(monday.getMonth() + 1).padStart(2, "0")}-` +
-      `${String(monday.getDate()).padStart(2, "0")}`;
-
-    const { count: weeklyContactsCount, error: weeklyContactsError } =
-      await supabase
-        .from("contacts")
-        .select("*", { count: "exact", head: true })
-        .gte("created_at", `${mondayDate}T00:00:00`);
-
-    if (weeklyContactsError) throw weeklyContactsError;
-
-    weeklyContacts.value = weeklyContactsCount || 0;
-
-    const { count: weeklyOutingsCount, error: weeklyOutingsError } =
-      await supabase
-        .from("evangelism_outings")
-        .select("*", { count: "exact", head: true })
-        .gte("outing_date", mondayDate);
-
-    if (weeklyOutingsError) throw weeklyOutingsError;
-
-    weeklyOutings.value = weeklyOutingsCount || 0;
-
-    // --- New: top individual contributors ---
-    const { data: allContacts, error: allContactsError } = await supabase
-      .from("contacts")
-      .select("added_by");
-
-    if (allContactsError) throw allContactsError;
-
-    const countsByUser = {};
-
-    for (const contact of allContacts || []) {
+    for (const contact of page || []) {
       if (!contact.added_by) continue;
 
       countsByUser[contact.added_by] =
         (countsByUser[contact.added_by] || 0) + 1;
     }
 
-    const topIds = Object.entries(countsByUser)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([id]) => id);
+    if (!page || page.length < pageSize) break;
 
-    if (topIds.length) {
-      const { data: topProfiles, error: topProfilesError } = await supabase
-        .from("profiles")
-        .select("id, full_name, team")
-        .in("id", topIds);
+    offset += pageSize;
+  }
 
-      if (topProfilesError) throw topProfilesError;
+  const topIds = Object.entries(countsByUser)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([id]) => id);
 
-      const profileMap = {};
-      for (const profile of topProfiles || []) {
-        profileMap[profile.id] = profile;
-      }
+  if (!topIds.length) {
+    topContributors.value = [];
+    return;
+  }
 
-      topContributors.value = topIds.map((id) => ({
-        id,
-        name: profileMap[id]?.full_name || "Unknown",
-        team: profileMap[id]?.team || "",
-        count: countsByUser[id],
-      }));
-    } else {
-      topContributors.value = [];
-    }
+  const { data: topProfiles, error: topProfilesError } = await supabase
+    .from("profiles")
+    .select("id, full_name, team")
+    .in("id", topIds);
+
+  if (topProfilesError) throw topProfilesError;
+
+  const profileMap = {};
+
+  for (const profile of topProfiles || []) {
+    profileMap[profile.id] = profile;
+  }
+
+  topContributors.value = topIds.map((id) => ({
+    id,
+    name: profileMap[id]?.full_name || "Unknown",
+    team: profileMap[id]?.team || "",
+    count: countsByUser[id],
+  }));
+};
+
+/* =========================================================
+   HEADLINE TOTALS
+========================================================= */
+
+const loadTotals = async () => {
+  const { start: weekStart, end: weekEnd } = getWeekRange();
+
+  weekLabel.value = formatWeekLabel({ start: weekStart, end: weekEnd });
+
+  // Stale = still "New" three days after being recorded.
+  const staleCutoff = new Date();
+  staleCutoff.setDate(staleCutoff.getDate() - 3);
+
+  const results = await Promise.all([
+    supabase.from("contacts").select("*", { count: "exact", head: true }),
+
+    supabase
+      .from("evangelism_outings")
+      .select("*", { count: "exact", head: true }),
+
+    supabase.from("first_timers").select("*", { count: "exact", head: true }),
+
+    supabase
+      .from("first_timers")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(5),
+
+    supabase
+      .from("contacts")
+      .select("*", { count: "exact", head: true })
+      .eq("status", "New")
+      .lt("created_at", staleCutoff.toISOString()),
+
+    supabase
+      .from("contacts")
+      .select("*", { count: "exact", head: true })
+      .gte("created_at", weekStart.toISOString())
+      .lt("created_at", weekEnd.toISOString()),
+
+    supabase
+      .from("evangelism_outings")
+      .select("*", { count: "exact", head: true })
+      .gte("outing_date", toDateKey(weekStart))
+      .lt("outing_date", toDateKey(weekEnd)),
+  ]);
+
+  for (const result of results) {
+    if (result.error) throw result.error;
+  }
+
+  const [
+    contactsResult,
+    outingsResult,
+    firstTimersResult,
+    recentResult,
+    staleResult,
+    weeklyContactsResult,
+    weeklyOutingsResult,
+  ] = results;
+
+  totalContacts.value = contactsResult.count || 0;
+  totalOutings.value = outingsResult.count || 0;
+  firstTimers.value = firstTimersResult.count || 0;
+  recentFirstTimers.value = recentResult.data || [];
+  staleNewCount.value = staleResult.count || 0;
+  weeklyContacts.value = weeklyContactsResult.count || 0;
+  weeklyOutings.value = weeklyOutingsResult.count || 0;
+};
+
+/* =========================================================
+   SUMMARY
+
+   Every section is independent, so they run together rather
+   than one round trip after another.
+========================================================= */
+
+const loadSummary = async () => {
+  loading.value = true;
+  error.value = "";
+
+  try {
+    await Promise.all([
+      loadTotals(),
+      loadTeamStats(),
+      loadBranchStats(),
+      loadStatusBreakdown(),
+      loadTopContributors(),
+    ]);
   } catch (err) {
     console.error("Pastor summary error:", err);
+
     error.value = err.message || "Unable to load pastor summary.";
   } finally {
     loading.value = false;
@@ -323,6 +374,10 @@ const formatDate = (date) => {
 };
 
 const exportPdf = () => {
+  if (exporting.value) return;
+
+  exporting.value = true;
+
   const doc = new jsPDF();
 
   const gold = [212, 175, 55];
@@ -330,15 +385,15 @@ const exportPdf = () => {
   const gray = [100, 100, 100];
   const lightGray = [225, 225, 225];
 
-  const logo = new Image();
-
-  logo.onload = () => {
+  const render = (logo) => {
     // White page background
     doc.setFillColor(255, 255, 255);
     doc.rect(0, 0, 210, 297, "F");
 
-    // Church logo
-    doc.addImage(logo, "JPEG", 14, 10, 25, 25);
+    // Church logo (omitted if the image could not be loaded)
+    if (logo) {
+      doc.addImage(logo, "JPEG", 14, 10, 25, 25);
+    }
 
     // Church name
     doc.setTextColor(...black);
@@ -404,6 +459,7 @@ const exportPdf = () => {
         ["Total Outings", totalOutings.value],
         ["First Timers", firstTimers.value],
         ["Follow-up Rate", `${responseRate.value}%`],
+        ["Week", weekLabel.value],
         ["Weekly Contacts", weeklyContacts.value],
         ["Weekly Outings", weeklyOutings.value],
         ["Stale Contacts", staleNewCount.value],
@@ -412,8 +468,22 @@ const exportPdf = () => {
     });
 
     // Team performance
+    const teamScopeLabel =
+      teamScope.value === "week"
+        ? `This week (${weekLabel.value})`
+        : "All time";
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...black);
+    doc.text(
+      `Team Performance - ${teamScopeLabel}`,
+      14,
+      doc.lastAutoTable.finalY + 9,
+    );
+
     autoTable(doc, {
-      startY: doc.lastAutoTable.finalY + 12,
+      startY: doc.lastAutoTable.finalY + 14,
       head: [["Team", "Contacts", "Called", "Response Rate"]],
       body: teamStats.value.map((team) => [
         team.team,
@@ -472,10 +542,19 @@ const exportPdf = () => {
     }
 
     doc.save("transfiguration-church-pastor-summary.pdf");
+
+    exporting.value = false;
   };
 
+  const logo = new Image();
+
+  logo.onload = () => render(logo);
+
   logo.onerror = () => {
+    // Still produce the report - the logo is decoration, not the data.
     console.error("Unable to load church logo: /TCC.jpeg");
+
+    render(null);
   };
 
   logo.src = "/TCC.jpeg";
@@ -508,9 +587,10 @@ onMounted(() => {
         </p>
         <button
           @click="exportPdf"
-          class="rounded-xl border border-[#D4AF37]/30 bg-[#101010] px-4 py-2 text-sm font-semibold text-[#D4AF37]"
+          :disabled="exporting || loading"
+          class="rounded-xl border border-[#D4AF37]/30 bg-[#101010] px-4 py-2 text-sm font-semibold text-[#D4AF37] disabled:opacity-50"
         >
-          Export PDF
+          {{ exporting ? "Preparing..." : "Export PDF" }}
         </button>
       </div>
     </header>
@@ -732,13 +812,60 @@ onMounted(() => {
 
         <!-- Teams -->
         <section class="mt-8">
-          <div class="mb-4">
-            <p class="text-sm font-semibold text-[#D4AF37]">Team performance</p>
+          <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p class="text-sm font-semibold text-[#D4AF37]">
+                Team performance
+              </p>
 
-            <h2 class="mt-1 text-xl font-bold">Evangelism Teams</h2>
+              <h2 class="mt-1 text-xl font-bold">Evangelism Teams</h2>
+
+              <p class="mt-1 text-xs text-gray-600">
+                <template v-if="teamScope === 'week'">
+                  {{ weekLabel }} &middot; resets Friday night
+                </template>
+
+                <template v-else> All time </template>
+              </p>
+            </div>
+
+            <div
+              class="flex shrink-0 rounded-xl border border-white/10 bg-[#101010] p-1"
+            >
+              <button
+                type="button"
+                @click="setTeamScope('week')"
+                :disabled="teamStatsLoading"
+                :class="[
+                  'rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50',
+                  teamScope === 'week'
+                    ? 'bg-[#D4AF37] text-black'
+                    : 'text-gray-400 hover:text-white',
+                ]"
+              >
+                This week
+              </button>
+
+              <button
+                type="button"
+                @click="setTeamScope('all')"
+                :disabled="teamStatsLoading"
+                :class="[
+                  'rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50',
+                  teamScope === 'all'
+                    ? 'bg-[#D4AF37] text-black'
+                    : 'text-gray-400 hover:text-white',
+                ]"
+              >
+                All time
+              </button>
+            </div>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div
+            class="grid gap-3 transition-opacity sm:grid-cols-2 lg:grid-cols-4"
+            :class="teamStatsLoading ? 'opacity-40' : ''"
+          >
             <div
               v-for="team in teamStats"
               :key="team.team"
@@ -858,6 +985,10 @@ onMounted(() => {
             <p class="text-sm font-semibold text-[#D4AF37]">Current week</p>
 
             <h2 class="mt-1 text-xl font-bold">This Week's Activity</h2>
+
+            <p v-if="weekLabel" class="mt-1 text-xs text-gray-600">
+              {{ weekLabel }} &middot; resets Friday night
+            </p>
           </div>
 
           <div class="grid grid-cols-2 gap-3">

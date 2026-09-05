@@ -149,6 +149,22 @@ const closeActionFeedbackPrompt = () => {
 };
 
 /* =========================================================
+   PERMISSIONS
+
+   Mirrors the row level security rule on contacts: only the
+   person who recorded a contact, or a pastor, may change it.
+========================================================= */
+
+const canEditContact = (contact) => {
+  if (!contact) return false;
+
+  return (
+    contact.added_by === authStore.user?.id ||
+    authStore.profile?.is_pastor === true
+  );
+};
+
+/* =========================================================
    CHURCH SMS
 ========================================================= */
 
@@ -227,14 +243,16 @@ const callContact = async (contact) => {
   }
 
   try {
-    const { error: updateError } = await supabase
-      .from("contacts")
-      .update({ status: "Called" })
-      .eq("id", contact.id);
+    if (canEditContact(contact)) {
+      const { error: updateError } = await supabase
+        .from("contacts")
+        .update({ status: "Called" })
+        .eq("id", contact.id);
 
-    if (updateError) throw updateError;
+      if (updateError) throw updateError;
 
-    contact.status = "Called";
+      contact.status = "Called";
+    }
 
     window.location.href = `tel:${phone}`;
 
@@ -266,14 +284,16 @@ const textContact = async (contact) => {
   if (!branch) return;
 
   try {
-    const { error: updateError } = await supabase
-      .from("contacts")
-      .update({ status: "Called" })
-      .eq("id", contact.id);
+    if (canEditContact(contact)) {
+      const { error: updateError } = await supabase
+        .from("contacts")
+        .update({ status: "Called" })
+        .eq("id", contact.id);
 
-    if (updateError) throw updateError;
+      if (updateError) throw updateError;
 
-    contact.status = "Called";
+      contact.status = "Called";
+    }
 
     const message = buildSmsMessage(contact, branch);
 
@@ -1261,7 +1281,7 @@ onMounted(async () => {
                       </span>
 
                       <button
-                        v-if="contact.phone"
+                        v-if="contact.phone && canEditContact(contact)"
                         type="button"
                         @click.stop="callContact(contact)"
                         class="inline-flex items-center gap-1 rounded-lg border border-green-500/20 bg-green-500/10 px-2 py-1.5 text-xs font-semibold text-green-400 transition hover:bg-green-500/20"
@@ -1271,7 +1291,7 @@ onMounted(async () => {
                       </button>
 
                       <button
-                        v-if="contact.phone"
+                        v-if="contact.phone && canEditContact(contact)"
                         type="button"
                         @click.stop="textContact(contact)"
                         class="inline-flex items-center gap-1 rounded-lg border border-blue-500/20 bg-blue-500/10 px-2 py-1.5 text-xs font-semibold text-blue-400 transition hover:bg-blue-500/20"
@@ -1328,23 +1348,33 @@ onMounted(async () => {
                   <!-- FEEDBACK -->
 
                   <td class="max-w-xs px-4 py-4">
-                    <button
-                      v-if="contact.notes"
-                      type="button"
-                      @click.stop="openFeedback(contact)"
-                      class="block max-w-[220px] truncate text-left text-sm text-gray-400 transition hover:text-[#D4AF37]"
-                    >
-                      {{ contact.notes }}
-                    </button>
+                    <template v-if="canEditContact(contact)">
+                      <button
+                        v-if="contact.notes"
+                        type="button"
+                        @click.stop="openFeedback(contact)"
+                        class="block max-w-[220px] truncate text-left text-sm text-gray-400 transition hover:text-[#D4AF37]"
+                      >
+                        {{ contact.notes }}
+                      </button>
 
-                    <button
+                      <button
+                        v-else
+                        type="button"
+                        @click.stop="openFeedback(contact)"
+                        class="text-xs font-semibold text-[#D4AF37] transition hover:text-[#E2C45A]"
+                      >
+                        + Add feedback
+                      </button>
+                    </template>
+
+                    <p
                       v-else
-                      type="button"
-                      @click.stop="openFeedback(contact)"
-                      class="text-xs font-semibold text-[#D4AF37] transition hover:text-[#E2C45A]"
+                      class="max-w-[220px] truncate text-sm text-gray-500"
+                      :title="contact.notes || ''"
                     >
-                      + Add feedback
-                    </button>
+                      {{ contact.notes || "—" }}
+                    </p>
                   </td>
                 </tr>
               </tbody>

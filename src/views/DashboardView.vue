@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import { supabase } from "../lib/supabase";
+import { getWeekRange, formatWeekLabel } from "../lib/week";
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -20,9 +21,12 @@ const peopleThisWeek = ref(0);
 const teamRankings = ref([]);
 const menuOpen = ref(false);
 const topTeam = ref(null);
+const weekLabel = ref("");
+
 const closeMenu = () => {
   menuOpen.value = false;
 };
+
 const handleLogout = async () => {
   await authStore.signOut();
   router.push("/login");
@@ -74,22 +78,15 @@ const loadStats = async () => {
 
     totalOutings.value = outingCount || 0;
 
-    // Personal contacts this week
-    const today = new Date();
-    const day = today.getDay();
-    const diff = day === 0 ? 6 : day - 1;
-
-    const monday = new Date(today);
-    monday.setDate(today.getDate() - diff);
-    monday.setHours(0, 0, 0, 0);
-
-    const mondayDate = monday.toISOString().split("T")[0];
+    // Personal contacts this week (Saturday -> Friday)
+    const { start, end } = getWeekRange();
 
     const { count: weeklyCount, error: weeklyError } = await supabase
       .from("contacts")
       .select("*", { count: "exact", head: true })
       .eq("added_by", userId)
-      .gte("created_at", `${mondayDate}T00:00:00`);
+      .gte("created_at", start.toISOString())
+      .lt("created_at", end.toISOString());
 
     if (weeklyError) throw weeklyError;
 
@@ -110,6 +107,10 @@ const loadTeamRankings = async () => {
 
     const rankings = [];
 
+    const { start, end } = getWeekRange();
+
+    weekLabel.value = formatWeekLabel({ start, end });
+
     for (const team of teams) {
       const { data: members, error: membersError } = await supabase
         .from("profiles")
@@ -129,7 +130,9 @@ const loadTeamRankings = async () => {
         const { count: contactCount, error: contactsError } = await supabase
           .from("contacts")
           .select("*", { count: "exact", head: true })
-          .in("added_by", memberIds);
+          .in("added_by", memberIds)
+          .gte("created_at", start.toISOString())
+          .lt("created_at", end.toISOString());
 
         if (contactsError) throw contactsError;
 
@@ -589,7 +592,11 @@ onMounted(() => {
           <h3 class="mt-1 text-xl font-bold">Team Rankings</h3>
 
           <p class="mt-1 text-sm text-gray-500">
-            Ranked by the number of people reached.
+            Ranked by the number of people reached this week.
+          </p>
+
+          <p v-if="weekLabel" class="mt-1 text-xs text-gray-600">
+            {{ weekLabel }} &middot; resets Friday night
           </p>
         </div>
 

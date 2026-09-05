@@ -14,8 +14,13 @@ const loading = ref(true);
 const error = ref("");
 
 const editingId = ref(null);
-const editingNotes = ref("");
+const editForm = ref({ name: "", phone: "", notes: "" });
 const saving = ref(false);
+
+const addingPerson = ref(false);
+const newPerson = ref({ name: "", phone: "", notes: "" });
+const addingSaving = ref(false);
+const actionError = ref("");
 
 /* =========================================================
    FEEDBACK PROMPT
@@ -79,13 +84,34 @@ const getCallLink = (phone) => {
   return normalized ? `tel:${normalized}` : "#";
 };
 
-const getSmsLink = (phone) => {
-  const normalized = normalizePhone(phone);
+const buildSmsMessage = (contact) => {
+  const branch =
+    contact?.branch || contact?.location || outing.value?.location || "";
+
+  if (
+    branch.toLowerCase().includes("gbag") ||
+    branch.toLowerCase().includes("gbayi")
+  ) {
+    return `Good day beloved
+
+You are warmly invited to worship with us at Transfiguration Church on SUNDAY by 8am
+
+@ John Tanko street off Joel Bala Gbayi villa`;
+  }
+
+  return `Good day beloved
+
+You are warmly invited to worship with us at Transfiguration Church on SUNDAY by 8am
+
+@ Chalawa, Opposite millennium suite, Barnawa`;
+};
+
+const getSmsLink = (contact) => {
+  const normalized = normalizePhone(contact?.phone);
 
   if (!normalized) return "#";
 
-  const message =
-    "Hello! This is the Transfiguration Church team. It was lovely meeting you. We would love to stay connected with you. God bless you!";
+  const message = buildSmsMessage(contact);
 
   return `sms:${normalized}?body=${encodeURIComponent(message)}`;
 };
@@ -135,7 +161,7 @@ const handleCall = (contact) => {
 const handleText = (contact) => {
   if (!contact?.phone) return;
 
-  const link = getSmsLink(contact.phone);
+  const link = getSmsLink(contact);
 
   if (link !== "#") {
     window.location.href = link;
@@ -204,35 +230,61 @@ const loadOuting = async () => {
 };
 
 /* =========================================================
-   EDIT FEEDBACK
+   EDIT A SAVED CONTACT
+
+   An outing stays editable after it is saved: its owner (or a
+   pastor) can correct a person's details or add someone who
+   was missed on the day.
 ========================================================= */
 
 const startEditing = (contact) => {
   editingId.value = contact.id;
-  editingNotes.value = contact.notes || "";
+
+  editForm.value = {
+    name: contact.name || "",
+    phone: contact.phone || "",
+    notes: contact.notes || "",
+  };
+
+  addingPerson.value = false;
+  actionError.value = "";
 };
 
 const cancelEditing = () => {
   editingId.value = null;
-  editingNotes.value = "";
+
+  editForm.value = { name: "", phone: "", notes: "" };
+  actionError.value = "";
 };
 
-/* =========================================================
-   SAVE FEEDBACK
-========================================================= */
+const saveContact = async (contact) => {
+  const name = editForm.value.name.trim();
+  const phone = editForm.value.phone.trim();
+  const notes = editForm.value.notes.trim();
 
-const saveFeedback = async (contact) => {
+  if (!name || !phone) {
+    actionError.value = "Please enter a name and phone number.";
+    return;
+  }
+
   saving.value = true;
-  error.value = "";
+  actionError.value = "";
 
   try {
-    const notes = editingNotes.value.trim();
+    // Recording feedback moves a brand new contact to "Called", but an
+    // existing status (Following Up, Not Reachable) is left alone.
+    const status =
+      notes && (!contact.status || contact.status === "New")
+        ? "Called"
+        : contact.status || "New";
 
     const { data, error: updateError } = await supabase
       .from("contacts")
       .update({
+        name,
+        phone,
         notes: notes || null,
-        status: notes ? "Called" : "New",
+        status,
       })
       .eq("id", contact.id)
       .select()
@@ -248,11 +300,90 @@ const saveFeedback = async (contact) => {
 
     cancelEditing();
   } catch (err) {
-    console.error("Error updating feedback:", err);
+    console.error("Error updating contact:", err);
 
-    error.value = err.message || "Unable to update feedback.";
+    actionError.value = err.message || "Unable to update this person.";
   } finally {
     saving.value = false;
+  }
+};
+
+/* =========================================================
+   ADD A PERSON TO A SAVED OUTING
+========================================================= */
+
+const startAddingPerson = () => {
+  addingPerson.value = true;
+
+  newPerson.value = { name: "", phone: "", notes: "" };
+
+  cancelEditing();
+};
+
+const cancelAddingPerson = () => {
+  addingPerson.value = false;
+
+  newPerson.value = { name: "", phone: "", notes: "" };
+  actionError.value = "";
+};
+
+const saveNewPerson = async () => {
+  const name = newPerson.value.name.trim();
+  const phone = newPerson.value.phone.trim();
+  const notes = newPerson.value.notes.trim();
+
+  if (!name || !phone) {
+    actionError.value = "Please enter a name and phone number.";
+    return;
+  }
+
+  addingSaving.value = true;
+  actionError.value = "";
+
+  let createdId = null;
+
+  try {
+    const { data: contact, error: insertError } = await supabase
+      .from("contacts")
+      .insert({
+        name,
+        phone,
+        notes: notes || null,
+        status: notes ? "Called" : "New",
+        added_by: authStore.user.id,
+      })
+      .select()
+      .single();
+
+    if (insertError) throw insertError;
+
+    createdId = contact.id;
+
+    const { error: linkError } = await supabase.from("outing_contacts").insert({
+      outing_id: outing.value.id,
+      contact_id: contact.id,
+    });
+
+    if (linkError) throw linkError;
+
+    contacts.value.push(contact);
+
+    cancelAddingPerson();
+  } catch (err) {
+    console.error("Error adding person:", err);
+
+    // Do not leave a contact behind that belongs to no outing.
+    if (createdId) {
+      try {
+        await supabase.from("contacts").delete().eq("id", createdId);
+      } catch (cleanupError) {
+        console.error("Error cleaning up contact:", cleanupError);
+      }
+    }
+
+    actionError.value = err.message || "Unable to add this person.";
+  } finally {
+    addingSaving.value = false;
   }
 };
 
@@ -337,7 +468,7 @@ onMounted(() => {
           </div>
 
           <div v-if="canEdit" class="text-right text-xs text-gray-500">
-            You can edit feedback
+            You can add people and edit their details
           </div>
         </div>
 
@@ -356,156 +487,292 @@ onMounted(() => {
              CONTACTS
         ================================================== -->
 
-        <div v-else class="space-y-3">
+        <div v-if="contacts.length" class="space-y-3">
           <article
             v-for="contact in contacts"
             :key="contact.id"
             class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
           >
-            <!-- Person Header -->
+            <!-- =================================================
+                 VIEW
+            ================================================== -->
 
-            <div class="flex items-start gap-3">
-              <!-- Avatar -->
+            <template v-if="editingId !== contact.id">
+              <!-- Person Header -->
 
-              <div
-                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#D4AF37]/10 font-bold text-[#D4AF37]"
-              >
-                {{ contact.name?.charAt(0)?.toUpperCase() || "?" }}
-              </div>
+              <div class="flex items-start gap-3">
+                <!-- Avatar -->
 
-              <!-- Details -->
-
-              <div class="min-w-0 flex-1">
-                <div class="flex flex-wrap items-center gap-2">
-                  <h2 class="font-bold">
-                    {{ contact.name }}
-                  </h2>
-
-                  <!-- Status -->
-
-                  <span
-                    :class="[
-                      'rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide',
-                      contact.status === 'Called'
-                        ? 'bg-[#D4AF37]/10 text-[#D4AF37]'
-                        : 'bg-white/5 text-gray-500',
-                    ]"
-                  >
-                    {{ contact.status || "New" }}
-                  </span>
+                <div
+                  class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#D4AF37]/10 font-bold text-[#D4AF37]"
+                >
+                  {{ contact.name?.charAt(0)?.toUpperCase() || "?" }}
                 </div>
 
-                <!-- Phone -->
+                <!-- Details -->
 
-                <p class="mt-1 text-sm text-gray-500">
-                  {{ contact.phone || "No phone number" }}
-                </p>
+                <div class="min-w-0 flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <h2 class="font-bold">
+                      {{ contact.name }}
+                    </h2>
+
+                    <!-- Status -->
+
+                    <span
+                      :class="[
+                        'rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide',
+                        contact.status === 'Called'
+                          ? 'bg-[#D4AF37]/10 text-[#D4AF37]'
+                          : 'bg-white/5 text-gray-500',
+                      ]"
+                    >
+                      {{ contact.status || "New" }}
+                    </span>
+                  </div>
+
+                  <!-- Phone -->
+
+                  <p class="mt-1 text-sm text-gray-500">
+                    {{ contact.phone || "No phone number" }}
+                  </p>
+                </div>
+
+                <!-- Edit -->
+
+                <button
+                  v-if="canEdit"
+                  type="button"
+                  @click="startEditing(contact)"
+                  class="shrink-0 text-xs font-semibold text-[#D4AF37] hover:text-[#E2C45A]"
+                >
+                  Edit
+                </button>
               </div>
 
-              <!-- Edit -->
+              <!-- =================================================
+                   QUICK ACTION BUTTONS
+              ================================================== -->
 
-              <button
-                v-if="canEdit && editingId !== contact.id"
-                type="button"
-                @click="startEditing(contact)"
-                class="shrink-0 text-xs font-semibold text-[#D4AF37] hover:text-[#E2C45A]"
+              <div v-if="contact.phone" class="mt-4 flex gap-2">
+                <!-- CALL -->
+
+                <button
+                  type="button"
+                  @click="handleCall(contact)"
+                  class="flex flex-1 items-center justify-center gap-2 rounded-xl border border-green-500/20 bg-green-500/10 px-3 py-2.5 text-sm font-semibold text-green-400 transition hover:bg-green-500/20 active:scale-[0.98]"
+                >
+                  <span class="text-base">📞</span>
+                  <span>Call</span>
+                </button>
+
+                <!-- TEXT -->
+
+                <button
+                  type="button"
+                  @click="handleText(contact)"
+                  class="flex flex-1 items-center justify-center gap-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2.5 text-sm font-semibold text-blue-400 transition hover:bg-blue-500/20 active:scale-[0.98]"
+                >
+                  <span class="text-base">💬</span>
+                  <span>Text</span>
+                </button>
+              </div>
+
+              <!-- No phone -->
+
+              <div
+                v-else
+                class="mt-4 rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5 text-center text-xs text-gray-600"
               >
-                Edit
-              </button>
-            </div>
+                No phone number available for this contact.
+              </div>
+
+              <!-- =================================================
+                   FEEDBACK
+              ================================================== -->
+
+              <div class="mt-4 border-t border-white/5 pt-4">
+                <p
+                  class="text-xs font-semibold uppercase tracking-wide text-gray-600"
+                >
+                  Feedback
+                </p>
+
+                <p class="mt-2 text-sm leading-6 text-gray-400">
+                  {{ contact.notes || "No feedback recorded yet." }}
+                </p>
+              </div>
+            </template>
 
             <!-- =================================================
-                 QUICK ACTION BUTTONS
+                 EDIT
             ================================================== -->
 
-            <div v-if="contact.phone" class="mt-4 flex gap-2">
-              <!-- CALL -->
-
-              <button
-                type="button"
-                @click="handleCall(contact)"
-                class="flex flex-1 items-center justify-center gap-2 rounded-xl border border-green-500/20 bg-green-500/10 px-3 py-2.5 text-sm font-semibold text-green-400 transition hover:bg-green-500/20 active:scale-[0.98]"
-              >
-                <span class="text-base">📞</span>
-                <span>Call</span>
-              </button>
-
-              <!-- TEXT -->
-
-              <button
-                type="button"
-                @click="handleText(contact)"
-                class="flex flex-1 items-center justify-center gap-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2.5 text-sm font-semibold text-blue-400 transition hover:bg-blue-500/20 active:scale-[0.98]"
-              >
-                <span class="text-base">💬</span>
-                <span>Text</span>
-              </button>
-            </div>
-
-            <!-- No phone -->
-
-            <div
-              v-else
-              class="mt-4 rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5 text-center text-xs text-gray-600"
-            >
-              No phone number available for this contact.
-            </div>
-
-            <!-- =================================================
-                 FEEDBACK
-            ================================================== -->
-
-            <div class="mt-4 border-t border-white/5 pt-4">
+            <div v-else>
               <p
                 class="text-xs font-semibold uppercase tracking-wide text-gray-600"
               >
-                Feedback
+                Editing person
               </p>
 
-              <!-- Normal -->
+              <div class="mt-3 space-y-3">
+                <div>
+                  <label class="text-xs text-gray-500">Name</label>
+
+                  <input
+                    v-model="editForm.name"
+                    type="text"
+                    placeholder="Full name"
+                    class="mt-1 w-full rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  />
+                </div>
+
+                <div>
+                  <label class="text-xs text-gray-500">Phone number</label>
+
+                  <input
+                    v-model="editForm.phone"
+                    type="tel"
+                    inputmode="tel"
+                    placeholder="08012345678"
+                    class="mt-1 w-full rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  />
+                </div>
+
+                <div>
+                  <label class="text-xs text-gray-500">Feedback</label>
+
+                  <textarea
+                    v-model="editForm.notes"
+                    rows="3"
+                    placeholder="Enter feedback..."
+                    class="mt-1 w-full resize-none rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  ></textarea>
+                </div>
+              </div>
 
               <p
-                v-if="editingId !== contact.id"
-                class="mt-2 text-sm leading-6 text-gray-400"
+                v-if="actionError"
+                class="mt-3 rounded-xl border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-400"
               >
-                {{ contact.notes || "No feedback recorded yet." }}
+                {{ actionError }}
               </p>
 
-              <!-- Editing -->
+              <div class="mt-4 flex gap-2">
+                <!-- Cancel -->
 
-              <div v-else class="mt-3">
-                <textarea
-                  v-model="editingNotes"
-                  rows="3"
-                  placeholder="Enter feedback..."
-                  class="w-full resize-none rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
-                ></textarea>
+                <button
+                  type="button"
+                  @click="cancelEditing"
+                  class="rounded-lg border border-white/10 px-4 py-2 text-xs font-semibold text-gray-400 hover:text-white"
+                >
+                  Cancel
+                </button>
 
-                <div class="mt-3 flex gap-2">
-                  <!-- Cancel -->
+                <!-- Save -->
 
-                  <button
-                    type="button"
-                    @click="cancelEditing"
-                    class="rounded-lg border border-white/10 px-4 py-2 text-xs font-semibold text-gray-400 hover:text-white"
-                  >
-                    Cancel
-                  </button>
-
-                  <!-- Save -->
-
-                  <button
-                    type="button"
-                    @click="saveFeedback(contact)"
-                    :disabled="saving"
-                    class="rounded-lg bg-[#D4AF37] px-4 py-2 text-xs font-black text-black disabled:opacity-50"
-                  >
-                    {{ saving ? "Saving..." : "Save feedback" }}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  @click="saveContact(contact)"
+                  :disabled="saving"
+                  class="rounded-lg bg-[#D4AF37] px-4 py-2 text-xs font-black text-black disabled:opacity-50"
+                >
+                  {{ saving ? "Saving..." : "Save changes" }}
+                </button>
               </div>
             </div>
           </article>
+        </div>
+
+        <!-- =================================================
+             ADD A PERSON
+        ================================================== -->
+
+        <div v-if="canEdit" class="mt-3">
+          <button
+            v-if="!addingPerson"
+            type="button"
+            @click="startAddingPerson"
+            class="w-full rounded-2xl border border-dashed border-[#D4AF37]/30 bg-[#101010] px-4 py-4 text-sm font-semibold text-[#D4AF37] transition hover:border-[#D4AF37]/60 hover:bg-[#141414]"
+          >
+            + Add person to this outing
+          </button>
+
+          <div
+            v-else
+            class="rounded-2xl border border-[#D4AF37]/30 bg-[#101010] p-4 sm:p-5"
+          >
+            <p
+              class="text-xs font-semibold uppercase tracking-wide text-gray-600"
+            >
+              New person
+            </p>
+
+            <div class="mt-3 space-y-3">
+              <div>
+                <label class="text-xs text-gray-500">Name</label>
+
+                <input
+                  v-model="newPerson.name"
+                  type="text"
+                  placeholder="Full name"
+                  class="mt-1 w-full rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                />
+              </div>
+
+              <div>
+                <label class="text-xs text-gray-500">Phone number</label>
+
+                <input
+                  v-model="newPerson.phone"
+                  type="tel"
+                  inputmode="tel"
+                  placeholder="08012345678"
+                  class="mt-1 w-full rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                />
+              </div>
+
+              <div>
+                <label class="text-xs text-gray-500">
+                  Feedback
+                  <span class="text-gray-700">(optional)</span>
+                </label>
+
+                <textarea
+                  v-model="newPerson.notes"
+                  rows="3"
+                  placeholder="Enter feedback..."
+                  class="mt-1 w-full resize-none rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                ></textarea>
+              </div>
+            </div>
+
+            <p
+              v-if="actionError"
+              class="mt-3 rounded-xl border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-400"
+            >
+              {{ actionError }}
+            </p>
+
+            <div class="mt-4 flex gap-2">
+              <button
+                type="button"
+                @click="cancelAddingPerson"
+                class="rounded-lg border border-white/10 px-4 py-2 text-xs font-semibold text-gray-400 hover:text-white"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                @click="saveNewPerson"
+                :disabled="addingSaving"
+                class="rounded-lg bg-[#D4AF37] px-4 py-2 text-xs font-black text-black disabled:opacity-50"
+              >
+                {{ addingSaving ? "Adding..." : "Add person" }}
+              </button>
+            </div>
+          </div>
         </div>
       </template>
     </main>
