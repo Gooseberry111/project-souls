@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import BottomNav from "../components/BottomNav.vue";
+import { goBack } from "../lib/navigation";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
 import jsPDF from "jspdf";
@@ -391,16 +393,16 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080808] text-white">
+  <div class="min-h-screen text-white">
     <!-- Header -->
-    <header class="border-b border-white/10 bg-[#0D0D0D]">
+    <header class="glass-bar border-b">
       <div class="mx-auto max-w-5xl px-4 py-5 sm:px-6">
         <button
           type="button"
-          @click="router.push('/dashboard')"
-          class="mb-5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
+          @click="goBack(router)"
+          class="mb-5 inline-flex items-center gap-1.5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
         >
-          ← Back to dashboard
+          ← Back
         </button>
 
         <div class="flex items-start justify-between gap-4">
@@ -412,9 +414,9 @@ onMounted(() => {
               Restricted
             </div>
 
-            <h1 class="mt-1 text-2xl font-black sm:text-3xl">First Timers</h1>
+            <h1 class="page-title mt-2">First Timers</h1>
 
-            <p class="mt-2 text-sm text-gray-500">
+            <p class="muted mt-2">
               New people who visited the church.
             </p>
           </div>
@@ -432,15 +434,15 @@ onMounted(() => {
     </header>
 
     <!-- Main -->
-    <main class="mx-auto max-w-5xl px-4 py-6 pb-24 sm:px-6 sm:py-8">
+    <main class="mx-auto max-w-5xl px-4 py-6 pb-28 sm:px-6 sm:py-8">
       <!-- Add Form -->
       <section
         v-if="showForm && canAdd"
-        class="mb-8 rounded-2xl border border-[#D4AF37]/30 bg-[#101010] p-5 sm:p-6"
+        class="mb-8 rounded-2xl border border-[#D4AF37]/30 bg-[#D4AF37]/[0.05] backdrop-blur-xl p-5 sm:p-6"
       >
-        <p class="text-sm font-semibold text-[#D4AF37]">New First Timers</p>
+        <p class="eyebrow">New First Timers</p>
 
-        <h2 class="mt-1 text-xl font-bold">Record today's visitors</h2>
+        <h2 class="section-title mt-2">Record today's visitors</h2>
 
         <!-- Branch -->
         <div class="mt-6">
@@ -452,7 +454,7 @@ onMounted(() => {
 
           <select
             v-model="form.branch"
-            class="w-full rounded-xl border border-white/10 bg-[#080808] px-4 py-3 text-sm text-white outline-none focus:border-[#D4AF37]/50"
+            class="field-select"
           >
             <option value="">Select center</option>
 
@@ -467,7 +469,7 @@ onMounted(() => {
           <div
             v-for="(person, index) in form.people"
             :key="index"
-            class="rounded-2xl border border-white/10 bg-[#080808] p-4 sm:p-5"
+            class="glass-card p-4 sm:p-5"
           >
             <div class="mb-4 flex items-center justify-between">
               <p class="text-sm font-bold text-[#D4AF37]">
@@ -495,7 +497,7 @@ onMounted(() => {
                   v-model="person.full_name"
                   type="text"
                   placeholder="Enter full name"
-                  class="w-full rounded-xl border border-white/10 bg-[#101010] px-4 py-3 text-base text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  class="field"
                 />
               </div>
 
@@ -509,7 +511,7 @@ onMounted(() => {
                   v-model="person.phone"
                   type="tel"
                   placeholder="Enter phone number"
-                  class="w-full rounded-xl border border-white/10 bg-[#101010] px-4 py-3 text-base text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  class="field"
                 />
               </div>
 
@@ -523,7 +525,7 @@ onMounted(() => {
                   v-model="person.invited_by"
                   type="text"
                   placeholder="Name of the person who invited them"
-                  class="w-full rounded-xl border border-white/10 bg-[#101010] px-4 py-3 text-base text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  class="field"
                 />
               </div>
 
@@ -535,7 +537,7 @@ onMounted(() => {
                   v-model="person.notes"
                   rows="3"
                   placeholder="Anything important about this person..."
-                  class="w-full resize-none rounded-xl border border-white/10 bg-[#101010] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  class="field resize-none text-sm"
                 ></textarea>
               </div>
             </div>
@@ -570,7 +572,7 @@ onMounted(() => {
       <!-- Error -->
       <div
         v-if="error && !showForm"
-        class="mb-5 rounded-xl border border-red-900/50 bg-red-950/30 p-4 text-sm text-red-400"
+        class="mb-5 rounded-xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur p-4 text-sm text-red-400"
       >
         {{ error }}
       </div>
@@ -580,13 +582,13 @@ onMounted(() => {
         <button
           type="button"
           @click="selectedFolder = null"
-          class="mb-5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
+          class="mb-5 inline-flex items-center gap-1.5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
         >
           ← Back to First Timers
         </button>
 
         <div class="mb-6">
-          <p class="text-sm font-semibold text-[#D4AF37]">
+          <p class="eyebrow">
             {{ selectedFolder.branch }} Branch
           </p>
 
@@ -594,7 +596,7 @@ onMounted(() => {
             <div>
               <h2 class="text-2xl font-black">First Timers</h2>
 
-              <p class="mt-1 text-sm text-gray-500">
+              <p class="muted mt-1">
                 {{ formatDate(selectedFolder.date) }}
                 ·
                 {{ selectedPeople.length }}
@@ -606,7 +608,7 @@ onMounted(() => {
               v-if="canAdd"
               type="button"
               @click="exportFirstTimersPdf"
-              class="shrink-0 rounded-xl border border-[#D4AF37]/30 bg-[#101010] px-4 py-2 text-sm font-semibold text-[#D4AF37] transition hover:border-[#D4AF37] hover:bg-[#D4AF37]/10"
+              class="shrink-0 rounded-xl border border-[#D4AF37]/30 bg-white/[0.035] backdrop-blur-xl px-4 py-2 text-sm font-semibold text-[#D4AF37] transition hover:border-[#D4AF37] hover:bg-[#D4AF37]/10"
             >
               Export PDF
             </button>
@@ -617,12 +619,12 @@ onMounted(() => {
           <article
             v-for="person in selectedPeople"
             :key="person.id"
-            class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            class="glass-card p-4 sm:p-5"
           >
             <div class="flex gap-3">
               <!-- Avatar -->
               <div
-                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#D4AF37]/10 font-bold text-[#D4AF37]"
+                class="icon-tile h-10 w-10 shrink-0 font-bold"
               >
                 {{ person.full_name?.charAt(0)?.toUpperCase() }}
               </div>
@@ -693,7 +695,7 @@ onMounted(() => {
         <!-- Loading -->
         <div
           v-if="loading"
-          class="rounded-2xl border border-white/10 bg-[#101010] p-8 text-center text-sm text-gray-500"
+          class="glass-card p-8 text-center text-sm text-gray-500"
         >
           Loading first timers...
         </div>
@@ -701,7 +703,7 @@ onMounted(() => {
         <!-- Empty -->
         <div
           v-else-if="folders.length === 0"
-          class="rounded-2xl border border-dashed border-white/10 bg-[#101010] p-8 text-center"
+          class="glass-dashed p-8 text-center"
         >
           <p class="text-gray-400">No first timers recorded yet.</p>
 
@@ -717,7 +719,7 @@ onMounted(() => {
             :key="folder.key"
             type="button"
             @click="selectedFolder = folder"
-            class="group flex w-full items-center gap-4 rounded-2xl border border-white/10 bg-[#101010] p-4 text-left transition hover:border-[#D4AF37]/40 hover:bg-[#141414]"
+            class="group flex w-full items-center gap-4 glass-card p-4 text-left transition hover:border-[#D4AF37]/40 hover:bg-white/[0.07]"
           >
             <!-- Folder -->
             <div
@@ -730,7 +732,7 @@ onMounted(() => {
             <div class="min-w-0 flex-1">
               <p class="font-semibold">{{ folder.branch }} Branch</p>
 
-              <p class="mt-1 text-sm text-gray-500">
+              <p class="muted mt-1">
                 {{ formatDate(folder.date) }}
               </p>
             </div>
@@ -754,5 +756,7 @@ onMounted(() => {
         </div>
       </section>
     </main>
+
+    <BottomNav />
   </div>
 </template>

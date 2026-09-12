@@ -55,6 +55,13 @@ const routes = [
     },
   },
   {
+    path: "/pastor/contributors",
+    component: () => import("../views/ContributorsView.vue"),
+    meta: {
+      pastorOnly: true,
+    },
+  },
+  {
     path: "/first-timers",
     component: () => import("../views/FirstTimersView.vue"),
     meta: {
@@ -71,6 +78,15 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+
+  /* Every navigation lands at the top of the page. Without this
+     the browser keeps the previous page's scroll offset, so
+     opening a long page from halfway down another one dropped
+     you into the middle of it. Going Back still restores where
+     you were, which is what a back button should do. */
+  scrollBehavior(to, from, savedPosition) {
+    return savedPosition || { top: 0 };
+  },
 });
 
 /* Everything requires a session except these. */

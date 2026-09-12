@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import BottomNav from "../components/BottomNav.vue";
+import { goBack } from "../lib/navigation";
 import { supabase } from "../lib/supabase";
 
 const router = useRouter();
@@ -50,37 +52,37 @@ const filteredPeople = computed(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080808] text-white">
+  <div class="min-h-screen text-white">
     <!-- Header -->
-    <header class="border-b border-white/10 bg-[#0D0D0D]">
+    <header class="glass-bar border-b">
       <div class="mx-auto max-w-4xl px-4 py-4 sm:px-6">
         <button
-          @click="router.push('/dashboard')"
-          class="mb-4 text-sm text-gray-500 transition hover:text-[#D4AF37]"
+          @click="goBack(router)"
+          class="mb-5 inline-flex items-center gap-1.5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
         >
-          ← Back to dashboard
+          ← Back
         </button>
 
-        <p class="text-sm font-semibold text-[#D4AF37]">Outreach</p>
+        <p class="eyebrow">Outreach</p>
 
-        <h1 class="mt-1 text-2xl font-black sm:text-3xl">People</h1>
+        <h1 class="page-title mt-2">People</h1>
       </div>
     </header>
 
-    <main class="mx-auto max-w-4xl px-4 py-8 pb-24 sm:px-6">
+    <main class="mx-auto max-w-4xl px-4 py-8 pb-28 sm:px-6">
       <!-- Search -->
       <div v-if="!loading && !error && people.length > 0" class="mb-6">
         <input
           v-model="search"
           type="search"
           placeholder="Search by name or phone number..."
-          class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+          class="field"
         />
       </div>
       <!-- Loading -->
       <div
         v-if="loading"
-        class="rounded-2xl border border-white/10 bg-[#101010] p-8 text-center text-sm text-gray-500"
+        class="glass-card p-8 text-center text-sm text-gray-500"
       >
         Loading people...
       </div>
@@ -88,7 +90,7 @@ const filteredPeople = computed(() => {
       <!-- Error -->
       <div
         v-else-if="error"
-        class="rounded-2xl border border-red-900/50 bg-red-950/30 p-5 text-sm text-red-400"
+        class="rounded-2xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur p-5 text-sm text-red-400"
       >
         {{ error }}
       </div>
@@ -96,7 +98,7 @@ const filteredPeople = computed(() => {
       <!-- Empty -->
       <div
         v-else-if="people.length === 0"
-        class="rounded-2xl border border-dashed border-white/10 bg-[#101010] p-8 text-center"
+        class="glass-dashed p-8 text-center"
       >
         <p class="text-gray-400">No people recorded yet.</p>
 
@@ -113,7 +115,7 @@ const filteredPeople = computed(() => {
         <div
           v-for="person in filteredPeople"
           :key="person.id"
-          class="rounded-2xl border border-white/10 bg-[#101010] p-5"
+          class="glass-card p-5"
         >
           <div class="flex items-start justify-between gap-4">
             <div class="min-w-0">
@@ -121,7 +123,7 @@ const filteredPeople = computed(() => {
                 {{ person.name }}
               </h2>
 
-              <p class="mt-1 text-sm text-gray-500">
+              <p class="muted mt-1">
                 {{ person.phone }}
               </p>
             </div>
@@ -152,31 +154,6 @@ const filteredPeople = computed(() => {
     </main>
 
     <!-- Mobile Navigation -->
-    <nav
-      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl lg:hidden"
-    >
-      <div class="grid grid-cols-3">
-        <button
-          @click="router.push('/dashboard')"
-          class="flex flex-col items-center gap-1 py-3 text-gray-500"
-        >
-          <span class="text-lg">⌂</span>
-          <span class="text-[11px]">Home</span>
-        </button>
-
-        <button
-          @click="router.push('/record-person')"
-          class="flex flex-col items-center gap-1 py-3 text-gray-500"
-        >
-          <span class="text-lg">+</span>
-          <span class="text-[11px]">Add Outing</span>
-        </button>
-
-        <button class="flex flex-col items-center gap-1 py-3 text-[#D4AF37]">
-          <span class="text-lg">≡</span>
-          <span class="text-[11px]">People</span>
-        </button>
-      </div>
-    </nav>
+    <BottomNav />
   </div>
 </template>

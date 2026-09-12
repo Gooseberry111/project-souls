@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import BottomNav from "../components/BottomNav.vue";
+import { goBack } from "../lib/navigation";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
 
@@ -11,7 +13,11 @@ const authStore = useAuthStore();
    GENERAL
 ========================================================= */
 
-const activeTab = ref("Mine");
+/* The pastor does not go out on evangelism, so "Mine" would
+   always be empty for him. He only ever sees Everyone. */
+const isPastor = computed(() => authStore.profile?.is_pastor === true);
+
+const activeTab = ref(authStore.profile?.is_pastor ? "Everyone" : "Mine");
 
 const outings = ref([]);
 const loading = ref(true);
@@ -132,23 +138,6 @@ const saveFeedback = async () => {
 };
 
 /* =========================================================
-   QUICK ACTION FEEDBACK PROMPT
-========================================================= */
-
-const showActionFeedbackPrompt = ref(false);
-const selectedActionContact = ref(null);
-
-const openActionFeedbackPrompt = (contact) => {
-  selectedActionContact.value = contact;
-  showActionFeedbackPrompt.value = true;
-};
-
-const closeActionFeedbackPrompt = () => {
-  selectedActionContact.value = null;
-  showActionFeedbackPrompt.value = false;
-};
-
-/* =========================================================
    PERMISSIONS
 
    Mirrors the row level security rule on contacts: only the
@@ -162,151 +151,6 @@ const canEditContact = (contact) => {
     contact.added_by === authStore.user?.id ||
     authStore.profile?.is_pastor === true
   );
-};
-
-/* =========================================================
-   CHURCH SMS
-========================================================= */
-
-const CHURCH_NAME = "Transfiguration Church";
-
-const BRANCH_MESSAGES = {
-  Barnawa: {
-    venue: "Transfiguration Church, Barnawa Centre",
-  },
-
-  Gbaggivilla: {
-    venue: "Transfiguration Church, Gbagyivilla Centre",
-  },
-};
-
-const buildSmsMessage = (contact) => {
-  const branch = contact?.branch || contact?.location || "";
-
-  if (
-    branch.toLowerCase().includes("gbag") ||
-    branch.toLowerCase().includes("gbayi")
-  ) {
-    return `Good day beloved
-
-You are warmly invited to worship with us at Transfiguration Church on SUNDAY by 8am
-
-@ John Tanko street off Joel Bala Gbayi villa`;
-  }
-
-  return `Good day beloved
-
-You are warmly invited to worship with us at Transfiguration Church on SUNDAY by 8am
-
-@ Chalawa, Opposite millennium suite, Barnawa`;
-};
-/* =========================================================
-   PHONE NUMBER
-========================================================= */
-
-const normalizePhoneNumber = (phone) => {
-  if (!phone) return "";
-
-  let number = String(phone).trim();
-
-  number = number.replace(/[^\d+]/g, "");
-
-  if (number.startsWith("+")) {
-    return number;
-  }
-
-  if (number.startsWith("0") && number.length === 11) {
-    return `+234${number.substring(1)}`;
-  }
-
-  if (number.startsWith("234")) {
-    return `+${number}`;
-  }
-
-  if (number.length === 10 && number.startsWith("8")) {
-    return `+234${number}`;
-  }
-
-  return number;
-};
-
-/* =========================================================
-   CALL CONTACT
-========================================================= */
-
-const callContact = async (contact) => {
-  const phone = normalizePhoneNumber(contact.phone);
-
-  if (!phone) {
-    alert("This contact does not have a valid phone number.");
-    return;
-  }
-
-  try {
-    if (canEditContact(contact)) {
-      const { error: updateError } = await supabase
-        .from("contacts")
-        .update({ status: "Called" })
-        .eq("id", contact.id);
-
-      if (updateError) throw updateError;
-
-      contact.status = "Called";
-    }
-
-    window.location.href = `tel:${phone}`;
-
-    setTimeout(() => {
-      openActionFeedbackPrompt(contact);
-    }, 800);
-  } catch (err) {
-    console.error("Error updating call status:", err);
-  }
-};
-/* =========================================================
-   TEXT CONTACT
-========================================================= */
-
-const textContact = async (contact) => {
-  const phone = normalizePhoneNumber(contact.phone);
-
-  if (!phone) {
-    alert("This contact does not have a valid phone number.");
-    return;
-  }
-
-  const branch =
-    contact.branch ||
-    window.prompt(
-      "Which centre would you like to invite this person to?\n\nType:\nBarnawa\nor\nGbaggivilla",
-    );
-
-  if (!branch) return;
-
-  try {
-    if (canEditContact(contact)) {
-      const { error: updateError } = await supabase
-        .from("contacts")
-        .update({ status: "Called" })
-        .eq("id", contact.id);
-
-      if (updateError) throw updateError;
-
-      contact.status = "Called";
-    }
-
-    const message = buildSmsMessage(contact, branch);
-
-    const smsUrl = `sms:${phone}?body=${encodeURIComponent(message)}`;
-
-    window.location.href = smsUrl;
-
-    setTimeout(() => {
-      openActionFeedbackPrompt(contact);
-    }, 800);
-  } catch (err) {
-    console.error("Error updating text status:", err);
-  }
 };
 
 /* =========================================================
@@ -459,6 +303,8 @@ const loadEveryoneContacts = async () => {
         location,
         notes,
         status,
+        called_at,
+        texted_at,
         created_at,
         added_by
       `,
@@ -571,6 +417,17 @@ const filteredOutings = computed(() => {
    EVERYONE FILTER
 ========================================================= */
 
+/* "Texted" is not one of the statuses - it lives in its own
+   column so it can be true alongside any status - but it
+   filters from the same dropdown. */
+const matchesStatusFilter = (contact) => {
+  if (statusFilter.value === "All") return true;
+
+  if (statusFilter.value === "Texted") return Boolean(contact.texted_at);
+
+  return contact.status === statusFilter.value;
+};
+
 const filteredEveryoneContacts = computed(() => {
   let result = [...everyoneContacts.value];
 
@@ -589,9 +446,7 @@ const filteredEveryoneContacts = computed(() => {
     result = result.filter((contact) => contact.branch === branchFilter.value);
   }
 
-  if (statusFilter.value !== "All") {
-    result = result.filter((contact) => contact.status === statusFilter.value);
-  }
+  result = result.filter(matchesStatusFilter);
 
   if (teamFilter.value !== "All") {
     result = result.filter((contact) => contact.team === teamFilter.value);
@@ -649,6 +504,66 @@ const paginatedEveryoneContacts = computed(() => {
    SORT
 ========================================================= */
 
+/* =========================================================
+   ACTIVE FILTERS
+========================================================= */
+
+const activeFilters = computed(() => {
+  const chips = [];
+
+  if (searchQuery.value.trim()) {
+    chips.push({
+      key: "search",
+      label: `"${searchQuery.value.trim()}"`,
+      clear: () => (searchQuery.value = ""),
+    });
+  }
+
+  if (branchFilter.value !== "All") {
+    chips.push({
+      key: "branch",
+      label: branchFilter.value,
+      clear: () => (branchFilter.value = "All"),
+    });
+  }
+
+  if (statusFilter.value !== "All") {
+    chips.push({
+      key: "status",
+      label: statusFilter.value,
+      clear: () => (statusFilter.value = "All"),
+    });
+  }
+
+  if (teamFilter.value !== "All") {
+    chips.push({
+      key: "team",
+      label: teamFilter.value,
+      clear: () => (teamFilter.value = "All"),
+    });
+  }
+
+  return chips;
+});
+
+const clearFilters = () => {
+  searchQuery.value = "";
+  branchFilter.value = "All";
+  statusFilter.value = "All";
+  teamFilter.value = "All";
+};
+
+/* Initial of the contact's name, for the row avatar. */
+const initialOf = (name) => (name || "?").trim().charAt(0).toUpperCase() || "?";
+
+const statusClass = (status) => {
+  if (status === "Called") return "badge-green";
+  if (status === "Following Up") return "badge-gold";
+  if (status === "Not Reachable") return "badge-red";
+
+  return "badge-neutral";
+};
+
 const changeSort = (column) => {
   if (sortBy.value === column) {
     sortDirection.value = sortDirection.value === "asc" ? "desc" : "asc";
@@ -698,6 +613,8 @@ const convertContactsToCsv = (contacts) => {
     "Date Added",
     "Added By",
     "Status",
+    "Called",
+    "Texted",
     "Feedback",
   ];
 
@@ -709,6 +626,8 @@ const convertContactsToCsv = (contacts) => {
       formatDate(contact.outingDate || contact.created_at),
       contact.addedBy || "",
       contact.status || "New",
+      contact.called_at ? formatDate(contact.called_at) : "No",
+      contact.texted_at ? formatDate(contact.texted_at) : "No",
       contact.notes || "",
     ];
   });
@@ -792,11 +711,7 @@ const exportContacts = async (scope, filtered) => {
         );
       }
 
-      if (statusFilter.value !== "All") {
-        contacts = contacts.filter(
-          (contact) => contact.status === statusFilter.value,
-        );
-      }
+      contacts = contacts.filter(matchesStatusFilter);
 
       if (scope !== "team" && teamFilter.value !== "All") {
         contacts = contacts.filter(
@@ -833,107 +748,224 @@ const exportContacts = async (scope, filtered) => {
 ========================================================= */
 
 onMounted(async () => {
-  await loadOutings();
+  // Outings only feed the "Mine" tab, which the pastor never sees.
+  if (!isPastor.value) {
+    await loadOutings();
+  } else {
+    loading.value = false;
+  }
+
   await loadEveryoneContacts();
 });
 </script>
-
 <template>
-  <div class="min-h-screen bg-[#080808] text-white">
-    <!-- HEADER -->
+  <div class="min-h-screen text-white">
+    <!-- =====================================================
+         HEADER
+    ====================================================== -->
 
-    <header class="border-b border-white/10 bg-[#0D0D0D]">
-      <div class="mx-auto max-w-5xl px-4 py-5 sm:px-6">
+    <header class="glass-bar sticky top-0 z-40 border-b">
+      <div class="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
         <button
           type="button"
-          @click="router.push('/dashboard')"
-          class="mb-5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
+          @click="goBack(router)"
+          class="mb-4 inline-flex items-center gap-1.5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
         >
-          ← Back to dashboard
+          ← Back
         </button>
 
-        <p class="text-sm font-semibold text-[#D4AF37]">Outreach</p>
+        <div
+          class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
+        >
+          <div class="min-w-0">
+            <p class="eyebrow">Outreach</p>
 
-        <h1 class="mt-1 text-2xl font-black sm:text-3xl">Contacts</h1>
+            <h1 class="page-title mt-2">Contacts</h1>
 
-        <p class="mt-2 text-sm text-gray-500">
-          Track your outreach and church-wide activity.
-        </p>
+            <p class="muted mt-2">
+              {{
+                isPastor
+                  ? "Every soul recorded across the church."
+                  : "Track your outreach and church-wide activity."
+              }}
+            </p>
+          </div>
+
+          <!-- EXPORT -->
+
+          <div v-if="canExport && activeTab === 'Everyone'" class="relative">
+            <button
+              type="button"
+              @click="showExportMenu = !showExportMenu"
+              :disabled="exporting"
+              class="btn-outline-gold w-full shrink-0 sm:w-auto"
+            >
+              {{ exporting ? "Exporting..." : "⤓ Export CSV" }}
+            </button>
+
+            <div
+              v-if="showExportMenu"
+              class="glass-panel absolute right-0 z-50 mt-2 w-72 p-2"
+            >
+              <template v-if="authStore.profile?.role === 'team_leader'">
+                <p
+                  class="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500"
+                >
+                  My team — {{ authStore.profile?.team }}
+                </p>
+
+                <button
+                  type="button"
+                  @click="exportContacts('team', true)"
+                  class="w-full rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.06]"
+                >
+                  <p class="text-sm font-semibold text-white">
+                    Export filtered view
+                  </p>
+
+                  <p class="mt-0.5 text-xs text-gray-500">
+                    Your team, matching current filters
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  @click="exportContacts('team', false)"
+                  class="w-full rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.06]"
+                >
+                  <p class="text-sm font-semibold text-white">Export all</p>
+
+                  <p class="mt-0.5 text-xs text-gray-500">
+                    Every contact from your team
+                  </p>
+                </button>
+
+                <div class="divider my-2"></div>
+              </template>
+
+              <p
+                class="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500"
+              >
+                Everyone
+              </p>
+
+              <button
+                type="button"
+                @click="exportContacts('everyone', true)"
+                class="w-full rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.06]"
+              >
+                <p class="text-sm font-semibold text-white">
+                  Export filtered view
+                </p>
+
+                <p class="mt-0.5 text-xs text-gray-500">
+                  Matching your current filters
+                </p>
+              </button>
+
+              <button
+                type="button"
+                @click="exportContacts('everyone', false)"
+                class="w-full rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.06]"
+              >
+                <p class="text-sm font-semibold text-white">Export all</p>
+
+                <p class="mt-0.5 text-xs text-gray-500">
+                  The complete church dataset
+                </p>
+              </button>
+            </div>
+
+            <p
+              v-if="exportError"
+              class="mt-2 rounded-xl border border-red-500/25 bg-red-500/[0.07] px-4 py-2.5 text-xs text-red-400 backdrop-blur"
+            >
+              {{ exportError }}
+            </p>
+          </div>
+        </div>
       </div>
     </header>
 
-    <!-- MAIN -->
+    <!-- =====================================================
+         MAIN
+    ====================================================== -->
 
-    <main class="mx-auto max-w-7xl px-4 py-6 pb-24 sm:px-6 sm:py-8">
+    <main class="mx-auto max-w-7xl px-4 py-6 pb-28 sm:px-6 sm:py-8 lg:px-8">
       <!-- TABS -->
 
-      <div class="mb-6 flex border-b border-white/10">
+      <div
+        v-if="!isPastor"
+        class="mb-6 inline-flex gap-1 rounded-2xl border border-white/[0.09] bg-white/[0.035] p-1 backdrop-blur-xl"
+      >
         <button
           type="button"
           @click="activeTab = 'Mine'"
           :class="[
-            'relative px-5 py-3 text-sm font-semibold transition',
+            'rounded-xl px-5 py-2.5 text-sm font-semibold transition duration-200',
             activeTab === 'Mine'
-              ? 'text-[#D4AF37]'
-              : 'text-gray-500 hover:text-white',
+              ? 'bg-gradient-to-b from-[#E2C45A] to-[#C9A331] text-black shadow-[0_4px_14px_-6px_rgba(212,175,55,0.8)]'
+              : 'text-gray-400 hover:text-white',
           ]"
         >
           Mine
-
-          <span
-            v-if="activeTab === 'Mine'"
-            class="absolute bottom-0 left-0 right-0 h-px bg-[#D4AF37]"
-          ></span>
         </button>
 
         <button
           type="button"
           @click="activeTab = 'Everyone'"
           :class="[
-            'relative px-5 py-3 text-sm font-semibold transition',
+            'rounded-xl px-5 py-2.5 text-sm font-semibold transition duration-200',
             activeTab === 'Everyone'
-              ? 'text-[#D4AF37]'
-              : 'text-gray-500 hover:text-white',
+              ? 'bg-gradient-to-b from-[#E2C45A] to-[#C9A331] text-black shadow-[0_4px_14px_-6px_rgba(212,175,55,0.8)]'
+              : 'text-gray-400 hover:text-white',
           ]"
         >
           Everyone
-
-          <span
-            v-if="activeTab === 'Everyone'"
-            class="absolute bottom-0 left-0 right-0 h-px bg-[#D4AF37]"
-          ></span>
         </button>
       </div>
 
-      <!-- =====================================================
+      <!-- =================================================
            MINE
-      ====================================================== -->
+      ================================================== -->
 
       <template v-if="activeTab === 'Mine'">
-        <div
-          v-if="loading"
-          class="rounded-2xl border border-white/10 bg-[#101010] p-8 text-center text-sm text-gray-500"
-        >
-          Loading outings...
+        <div v-if="loading" class="space-y-3">
+          <div
+            v-for="i in 4"
+            :key="`outing-skeleton-${i}`"
+            class="glass-card flex items-center gap-4 p-4 sm:p-5"
+          >
+            <div class="skeleton h-12 w-12 shrink-0 rounded-xl"></div>
+
+            <div class="flex-1 space-y-2">
+              <div class="skeleton h-4 w-48 rounded"></div>
+              <div class="skeleton h-3 w-32 rounded"></div>
+            </div>
+          </div>
         </div>
 
         <div
           v-else-if="error"
-          class="rounded-2xl border border-red-900/50 bg-red-950/30 p-5 text-sm text-red-400"
+          class="rounded-2xl border border-red-500/25 bg-red-500/[0.07] p-5 text-sm text-red-400 backdrop-blur"
         >
           {{ error }}
         </div>
 
-        <div
-          v-else-if="filteredOutings.length === 0"
-          class="rounded-2xl border border-dashed border-white/10 bg-[#101010] p-8 text-center"
-        >
-          <p class="text-gray-400">You have not recorded any outings yet.</p>
+        <div v-else-if="filteredOutings.length === 0" class="glass-dashed p-10 text-center">
+          <div class="icon-tile mx-auto h-14 w-14 text-2xl">▣</div>
+
+          <p class="mt-4 font-semibold text-gray-300">No outings yet</p>
+
+          <p class="muted mx-auto mt-1 max-w-sm">
+            Record an outing and the people you spoke to will appear here, ready
+            to call and text.
+          </p>
 
           <button
             type="button"
             @click="router.push('/record-person')"
-            class="mt-4 text-sm font-semibold text-[#D4AF37]"
+            class="btn-gold mt-6"
           >
             + Add outing
           </button>
@@ -945,45 +977,38 @@ onMounted(async () => {
             :key="outing.id"
             type="button"
             @click="openOuting(outing)"
-            class="group w-full rounded-2xl border border-white/10 bg-[#101010] p-4 text-left transition hover:border-[#D4AF37]/50 hover:bg-[#141414] sm:p-5"
+            class="glass-card-interactive group w-full p-4 text-left sm:p-5"
           >
-            <div class="flex items-start gap-3 sm:gap-4">
+            <div class="flex items-center gap-4">
               <div
-                class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#D4AF37]/20 bg-[#D4AF37]/10 text-[#D4AF37] sm:h-12 sm:w-12"
+                class="icon-tile h-12 w-12 shrink-0 text-lg transition group-hover:bg-[#D4AF37]/20"
               >
-                <span class="text-lg">▣</span>
+                ▣
               </div>
 
               <div class="min-w-0 flex-1">
                 <h2 class="truncate font-bold">
-                  {{ outing.location }} Branch —
-                  {{ formatDate(outing.outing_date) }}
+                  {{ outing.location }} Centre
                 </h2>
 
-                <div class="mt-2 space-y-1 text-xs text-gray-500">
-                  <p>
-                    Submitted by:
-                    <span class="text-gray-300">
-                      {{ outing.submitterName }}
-                    </span>
-                  </p>
+                <p class="mt-1 text-xs text-gray-500">
+                  {{ formatDate(outing.outing_date) }} ·
+                  {{ outing.team }}
+                </p>
+              </div>
 
-                  <p>
-                    Team:
-                    <span class="text-gray-300">
-                      {{ outing.team }}
-                    </span>
-                  </p>
+              <div class="shrink-0 text-right">
+                <p class="text-xl font-black text-[#D4AF37]">
+                  {{ outing.contactsCount }}
+                </p>
 
-                  <p>
-                    {{ outing.contactsCount }}
-                    {{ outing.contactsCount === 1 ? "person" : "people" }}
-                  </p>
-                </div>
+                <p class="text-[11px] text-gray-600">
+                  {{ outing.contactsCount === 1 ? "person" : "people" }}
+                </p>
               </div>
 
               <span
-                class="mt-1 shrink-0 text-gray-600 transition group-hover:text-[#D4AF37]"
+                class="shrink-0 text-gray-600 transition group-hover:translate-x-0.5 group-hover:text-[#D4AF37]"
               >
                 →
               </span>
@@ -992,256 +1017,189 @@ onMounted(async () => {
         </div>
       </template>
 
-      <!-- =====================================================
+      <!-- =================================================
            EVERYONE
-      ====================================================== -->
+      ================================================== -->
 
       <template v-else>
-        <!-- FILTERS -->
+        <!-- TOOLBAR -->
 
-        <section
-          class="mb-5 rounded-2xl border border-white/10 bg-[#101010] p-4"
-        >
-          <!-- EXPORT -->
-
-          <div v-if="canExport" class="relative mb-5">
-            <div class="flex justify-end">
-              <button
-                type="button"
-                @click="showExportMenu = !showExportMenu"
-                :disabled="exporting"
-                class="rounded-xl bg-[#D4AF37] px-4 py-2.5 text-sm font-bold text-black transition hover:bg-[#E2C45A] disabled:cursor-not-allowed disabled:opacity-50"
+        <section class="glass-card p-4">
+          <div class="grid gap-3 lg:grid-cols-12">
+            <div class="relative lg:col-span-5">
+              <span
+                class="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-gray-600"
               >
-                {{ exporting ? "Exporting..." : "Export CSV" }}
-              </button>
-            </div>
-
-            <div
-              v-if="showExportMenu"
-              class="absolute right-0 z-30 mt-2 w-72 rounded-2xl border border-white/10 bg-[#151515] p-3 shadow-2xl"
-            >
-              <template v-if="authStore.profile?.role === 'team_leader'">
-                <p
-                  class="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500"
-                >
-                  My Team — {{ authStore.profile?.team }}
-                </p>
-
-                <button
-                  type="button"
-                  @click="exportContacts('team', true)"
-                  class="w-full rounded-xl px-3 py-3 text-left transition hover:bg-white/[0.05]"
-                >
-                  <p class="text-sm font-semibold text-white">
-                    Export filtered view
-                  </p>
-
-                  <p class="mt-1 text-xs text-gray-500">
-                    Export your team's filtered contacts
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  @click="exportContacts('team', false)"
-                  class="w-full rounded-xl px-3 py-3 text-left transition hover:bg-white/[0.05]"
-                >
-                  <p class="text-sm font-semibold text-white">Export all</p>
-
-                  <p class="mt-1 text-xs text-gray-500">
-                    Export all contacts from your team
-                  </p>
-                </button>
-
-                <div class="my-2 border-t border-white/10"></div>
-              </template>
-
-              <p
-                class="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500"
-              >
-                Everyone
-              </p>
-
-              <button
-                type="button"
-                @click="exportContacts('everyone', true)"
-                class="w-full rounded-xl px-3 py-3 text-left transition hover:bg-white/[0.05]"
-              >
-                <p class="text-sm font-semibold text-white">
-                  Export filtered view
-                </p>
-
-                <p class="mt-1 text-xs text-gray-500">
-                  Export contacts matching your current filters
-                </p>
-              </button>
-
-              <button
-                type="button"
-                @click="exportContacts('everyone', false)"
-                class="w-full rounded-xl px-3 py-3 text-left transition hover:bg-white/[0.05]"
-              >
-                <p class="text-sm font-semibold text-white">Export all</p>
-
-                <p class="mt-1 text-xs text-gray-500">
-                  Export the complete Everyone dataset
-                </p>
-              </button>
-            </div>
-
-            <div
-              v-if="exportError"
-              class="mt-3 rounded-xl border border-red-900/50 bg-red-950/30 px-4 py-3 text-sm text-red-400"
-            >
-              {{ exportError }}
-            </div>
-          </div>
-
-          <!-- FILTER GRID -->
-
-          <div class="grid gap-3 md:grid-cols-4">
-            <div>
-              <label class="mb-2 block text-xs font-semibold text-gray-500">
-                Search
-              </label>
+                ⌕
+              </span>
 
               <input
                 v-model="searchQuery"
-                type="text"
-                placeholder="Name or phone number..."
-                class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-base text-white outline-none placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+                type="search"
+                placeholder="Search name or phone number..."
+                class="field pl-10"
               />
             </div>
 
-            <div>
-              <label class="mb-2 block text-xs font-semibold text-gray-500">
-                Center
-              </label>
+            <select v-model="branchFilter" class="field-select lg:col-span-2">
+              <option value="All">All centres</option>
+              <option value="Barnawa">Barnawa</option>
+              <option value="Gbaggivilla">Gbagyivilla</option>
+            </select>
 
-              <select
-                v-model="branchFilter"
-                class="w-full rounded-xl border border-white/10 bg-[#0B0B0B] px-4 py-3 text-sm text-white outline-none focus:border-[#D4AF37]"
-              >
-                <option value="All">All centers</option>
-                <option value="Barnawa">Barnawa</option>
-                <option value="Gbaggivilla">Gbagyivilla</option>
-              </select>
-            </div>
+            <select v-model="statusFilter" class="field-select lg:col-span-2">
+              <option value="All">All status</option>
+              <option value="New">New</option>
+              <option value="Called">Called</option>
+              <option value="Texted">Texted</option>
+              <option value="Following Up">Following Up</option>
+              <option value="Not Reachable">Not Reachable</option>
+            </select>
 
-            <div>
-              <label class="mb-2 block text-xs font-semibold text-gray-500">
-                Status
-              </label>
-
-              <select
-                v-model="statusFilter"
-                class="w-full rounded-xl border border-white/10 bg-[#0B0B0B] px-4 py-3 text-sm text-white outline-none focus:border-[#D4AF37]"
-              >
-                <option value="All">All status</option>
-                <option value="New">New</option>
-                <option value="Called">Called</option>
-                <option value="Following Up">Following Up</option>
-                <option value="Not Reachable">Not Reachable</option>
-              </select>
-            </div>
-
-            <div>
-              <label class="mb-2 block text-xs font-semibold text-gray-500">
-                Team
-              </label>
-
-              <select
-                v-model="teamFilter"
-                class="w-full rounded-xl border border-white/10 bg-[#0B0B0B] px-4 py-3 text-sm text-white outline-none focus:border-[#D4AF37]"
-              >
-                <option value="All">All teams</option>
-                <option value="Sent Ones">Sent Ones</option>
-                <option value="Pacesetters">Pacesetters</option>
-                <option value="Soul Harvesters">Soul Harvesters</option>
-                <option value="Kingdom Harvesters">Kingdom Harvesters</option>
-              </select>
-            </div>
+            <select v-model="teamFilter" class="field-select lg:col-span-3">
+              <option value="All">All teams</option>
+              <option value="Sent Ones">Sent Ones</option>
+              <option value="Pacesetters">Pacesetters</option>
+              <option value="Soul Harvesters">Soul Harvesters</option>
+              <option value="Kingdom Harvesters">Kingdom Harvesters</option>
+            </select>
           </div>
 
-          <div class="mt-4 flex items-center justify-between">
-            <p class="text-xs text-gray-600">
-              Showing
-              <span class="text-gray-300">
-                {{ filteredEveryoneContacts.length }}
-              </span>
-              contacts
-            </p>
+          <!-- ACTIVE FILTER CHIPS -->
+
+          <div
+            v-if="activeFilters.length"
+            class="mt-4 flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-4"
+          >
+            <span class="text-[11px] uppercase tracking-wide text-gray-600">
+              Filtered by
+            </span>
 
             <button
-              v-if="
-                searchQuery ||
-                branchFilter !== 'All' ||
-                statusFilter !== 'All' ||
-                teamFilter !== 'All'
-              "
+              v-for="chip in activeFilters"
+              :key="chip.key"
               type="button"
-              @click="
-                searchQuery = '';
-                branchFilter = 'All';
-                statusFilter = 'All';
-                teamFilter = 'All';
-              "
-              class="text-xs font-semibold text-[#D4AF37] transition hover:text-[#E2C45A]"
+              @click="chip.clear()"
+              class="badge-gold transition hover:border-[#D4AF37]/60 hover:bg-[#D4AF37]/20"
             >
-              Clear filters
+              {{ chip.label }}
+
+              <span class="text-[#D4AF37]/70">×</span>
+            </button>
+
+            <button
+              type="button"
+              @click="clearFilters"
+              class="ml-auto text-xs font-semibold text-gray-500 transition hover:text-white"
+            >
+              Clear all
             </button>
           </div>
         </section>
 
         <!-- LOADING -->
 
+        <!-- Shaped like the table rows it is standing in for, so
+             the list does not jump when the data lands. -->
         <div
           v-if="loadingContacts"
-          class="rounded-2xl border border-white/10 bg-[#101010] p-8 text-center text-sm text-gray-500"
+          class="glass-card mt-4 divide-y divide-white/[0.05] overflow-hidden"
         >
-          Loading contacts...
+          <div class="h-[46px] bg-white/[0.04]"></div>
+
+          <div
+            v-for="i in 10"
+            :key="`contact-skeleton-${i}`"
+            class="flex items-center gap-3 px-3 py-3 sm:px-5"
+          >
+            <div class="skeleton h-8 w-8 shrink-0 rounded-lg sm:h-9 sm:w-9"></div>
+
+            <div class="flex-1 space-y-1.5">
+              <div class="skeleton h-3.5 w-32 rounded sm:w-44"></div>
+              <div class="skeleton h-2.5 w-24 rounded sm:w-32"></div>
+            </div>
+
+            <div class="skeleton h-5 w-16 shrink-0 rounded-full"></div>
+          </div>
         </div>
 
         <!-- EMPTY -->
 
         <div
           v-else-if="filteredEveryoneContacts.length === 0"
-          class="rounded-2xl border border-dashed border-white/10 bg-[#101010] p-8 text-center"
+          class="glass-dashed mt-4 p-10 text-center"
         >
-          <p class="text-gray-400">No contacts match your current filters.</p>
+          <div class="icon-tile mx-auto h-14 w-14 text-2xl">⌕</div>
+
+          <p class="mt-4 font-semibold text-gray-300">No contacts found</p>
+
+          <p class="muted mt-1">Nothing matches your current filters.</p>
+
+          <button
+            v-if="activeFilters.length"
+            type="button"
+            @click="clearFilters"
+            class="btn-ghost mt-6"
+          >
+            Clear filters
+          </button>
         </div>
 
-        <!-- TABLE -->
+        <template v-else>
+          <!-- =============================================
+               TABLE
 
-        <div
-          v-else
-          class="overflow-hidden rounded-2xl border border-white/10 bg-[#101010]"
-        >
-          <div class="overflow-x-auto">
-            <table class="min-w-[1200px] w-full text-left">
-              <thead class="border-b border-white/10 bg-[#0D0D0D]">
-                <tr class="text-xs text-gray-500">
-                  <th class="px-4 py-4 font-semibold">Name</th>
+               One table at every size rather than cards on
+               mobile: a card per contact is easy to read but
+               impossible to scan once there are hundreds of
+               them. Columns drop away as the screen narrows,
+               and whatever is hidden moves into the meta line
+               under the contact's name, so nothing is lost.
 
-                  <th class="px-4 py-4 font-semibold">Phone Number</th>
+               The whole row opens feedback, which is how the
+               Feedback column stays reachable on a phone.
+          ============================================== -->
 
-                  <th class="px-4 py-4 font-semibold">Center</th>
+          <div class="glass-card mt-4 overflow-hidden">
+            <table class="w-full table-fixed text-left">
+              <thead class="border-b border-white/[0.09] bg-white/[0.04]">
+                <tr class="text-[10px] uppercase tracking-wider text-gray-500">
+                  <th
+                    class="cursor-pointer px-3 py-3.5 font-semibold transition hover:text-[#D4AF37] sm:px-5"
+                    @click="changeSort('name')"
+                  >
+                    Contact
+
+                    <span v-if="sortBy === 'name'" class="ml-1 text-[#D4AF37]">
+                      {{ sortDirection === "asc" ? "↑" : "↓" }}
+                    </span>
+                  </th>
+
+                  <!-- Added by sits ahead of the other optional
+                       columns: who recorded a contact, and for which
+                       team, is the point of the church-wide list, so
+                       it is the last thing to be given up. -->
+                  <th class="hidden w-40 px-4 py-3.5 font-semibold sm:table-cell">
+                    Added by
+                  </th>
+
+                  <th class="hidden w-32 px-4 py-3.5 font-semibold lg:table-cell">
+                    Centre
+                  </th>
 
                   <th
-                    class="cursor-pointer whitespace-nowrap px-4 py-4 font-semibold transition hover:text-[#D4AF37]"
+                    class="hidden w-36 cursor-pointer px-4 py-3.5 font-semibold transition hover:text-[#D4AF37] md:table-cell"
                     @click="changeSort('date')"
                   >
-                    Date Added
+                    Recorded
 
                     <span v-if="sortBy === 'date'" class="ml-1 text-[#D4AF37]">
                       {{ sortDirection === "asc" ? "↑" : "↓" }}
                     </span>
                   </th>
 
-                  <th class="px-4 py-4 font-semibold">Added By</th>
-
                   <th
-                    class="cursor-pointer px-4 py-4 font-semibold transition hover:text-[#D4AF37]"
+                    class="w-[7.5rem] cursor-pointer px-3 py-3.5 font-semibold transition hover:text-[#D4AF37] sm:w-40 sm:px-4"
                     @click="changeSort('status')"
                   >
                     Status
@@ -1254,127 +1212,178 @@ onMounted(async () => {
                     </span>
                   </th>
 
-                  <th class="px-4 py-4 font-semibold">Feedback</th>
+                  <th class="hidden w-64 px-5 py-3.5 font-semibold xl:table-cell">
+                    Feedback
+                  </th>
+
+                  <th class="w-9 px-2 py-3.5 xl:hidden"></th>
                 </tr>
               </thead>
 
-              <tbody class="divide-y divide-white/5">
+              <tbody class="divide-y divide-white/[0.05]">
                 <tr
                   v-for="contact in paginatedEveryoneContacts"
                   :key="contact.id"
-                  class="transition hover:bg-white/[0.02]"
+                  @click="canEditContact(contact) && openFeedback(contact)"
+                  :class="[
+                    'group transition hover:bg-white/[0.035]',
+                    canEditContact(contact) ? 'cursor-pointer' : '',
+                  ]"
                 >
-                  <!-- NAME -->
+                  <!-- CONTACT -->
 
-                  <td class="whitespace-nowrap px-4 py-4">
-                    <p class="font-semibold text-white">
-                      {{ contact.name }}
-                    </p>
-                  </td>
-
-                  <!-- PHONE -->
-
-                  <td class="px-4 py-4">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <span class="whitespace-nowrap text-sm text-gray-400">
-                        {{ contact.phone || "—" }}
-                      </span>
-
-                      <button
-                        v-if="contact.phone && canEditContact(contact)"
-                        type="button"
-                        @click.stop="callContact(contact)"
-                        class="inline-flex items-center gap-1 rounded-lg border border-green-500/20 bg-green-500/10 px-2 py-1.5 text-xs font-semibold text-green-400 transition hover:bg-green-500/20"
+                  <td class="px-3 py-3 sm:px-5">
+                    <div class="flex items-center gap-2.5 sm:gap-3">
+                      <div
+                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[#E2C45A]/30 to-[#A8861F]/20 text-[11px] font-black text-[#D4AF37] ring-1 ring-[#D4AF37]/20 sm:h-9 sm:w-9 sm:rounded-xl sm:text-xs"
                       >
-                        <span>📞</span>
-                        <span>Call</span>
-                      </button>
+                        {{ initialOf(contact.name) }}
+                      </div>
 
-                      <button
-                        v-if="contact.phone && canEditContact(contact)"
-                        type="button"
-                        @click.stop="textContact(contact)"
-                        class="inline-flex items-center gap-1 rounded-lg border border-blue-500/20 bg-blue-500/10 px-2 py-1.5 text-xs font-semibold text-blue-400 transition hover:bg-blue-500/20"
-                      >
-                        <span>💬</span>
-                        <span>Text</span>
-                      </button>
+                      <div class="min-w-0">
+                        <p
+                          class="truncate text-sm font-semibold text-white sm:text-[15px]"
+                        >
+                          {{ contact.name }}
+                        </p>
+
+                        <!-- Meta line: carries whichever columns the
+                             current screen is too narrow to show. -->
+                        <p
+                          class="mt-0.5 truncate text-[11px] text-gray-500 sm:text-xs"
+                        >
+                          <span>{{ contact.phone || "No number" }}</span>
+
+                          <span class="lg:hidden">
+                            · {{ contact.branch }}
+                          </span>
+
+                          <span class="md:hidden">
+                            ·
+                            {{
+                              formatDate(contact.outingDate || contact.created_at)
+                            }}
+                          </span>
+                        </p>
+
+                        <!-- Attribution, inline only on the narrowest
+                             screens where the column itself is gone. -->
+                        <p
+                          class="mt-1 truncate text-[11px] text-[#D4AF37]/80 sm:hidden"
+                        >
+                          ↳ {{ contact.addedBy }}
+
+                          <span class="text-gray-600">
+                            · {{ contact.team }}
+                          </span>
+                        </p>
+                      </div>
                     </div>
-                  </td>
-
-                  <!-- BRANCH -->
-
-                  <td class="whitespace-nowrap px-4 py-4 text-sm text-gray-400">
-                    {{ contact.branch }}
-                  </td>
-
-                  <!-- DATE -->
-
-                  <td class="whitespace-nowrap px-4 py-4 text-sm text-gray-400">
-                    {{ formatDate(contact.outingDate || contact.created_at) }}
                   </td>
 
                   <!-- ADDED BY -->
 
-                  <td class="px-4 py-4">
-                    <p class="whitespace-nowrap text-sm text-gray-300">
+                  <td class="hidden px-4 py-3 sm:table-cell">
+                    <p class="truncate text-sm font-medium text-gray-200">
                       {{ contact.addedBy }}
                     </p>
 
-                    <p class="mt-1 whitespace-nowrap text-xs text-gray-600">
-                      {{ contact.team }}
+                    <p class="mt-0.5 flex items-center gap-1.5">
+                      <span
+                        class="h-1.5 w-1.5 shrink-0 rounded-full bg-[#D4AF37]/60"
+                      ></span>
+
+                      <span class="truncate text-[11px] text-gray-500">
+                        {{ contact.team }}
+                      </span>
                     </p>
+                  </td>
+
+                  <!-- CENTRE -->
+
+                  <td
+                    class="hidden truncate px-4 py-3 text-sm text-gray-400 lg:table-cell"
+                  >
+                    {{ contact.branch }}
+                  </td>
+
+                  <!-- RECORDED -->
+
+                  <td
+                    class="hidden whitespace-nowrap px-4 py-3 text-sm text-gray-400 md:table-cell"
+                  >
+                    {{ formatDate(contact.outingDate || contact.created_at) }}
                   </td>
 
                   <!-- STATUS -->
 
-                  <td class="whitespace-nowrap px-4 py-4">
-                    <span
-                      class="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold"
-                      :class="
-                        contact.status === 'Called'
-                          ? 'border-green-500/20 bg-green-500/10 text-green-400'
-                          : contact.status === 'Following Up'
-                            ? 'border-[#D4AF37]/30 bg-[#D4AF37]/10 text-[#D4AF37]'
-                            : contact.status === 'Not Reachable'
-                              ? 'border-red-500/20 bg-red-500/10 text-red-400'
-                              : 'border-white/10 bg-white/[0.03] text-gray-400'
-                      "
-                    >
-                      {{ contact.status || "New" }}
-                    </span>
+                  <td class="px-3 py-3 sm:px-4">
+                    <div class="flex flex-wrap items-center gap-1">
+                      <span
+                        :class="[statusClass(contact.status), 'px-2 py-0.5']"
+                      >
+                        {{ contact.status || "New" }}
+                      </span>
+
+                      <!-- Separate from the status: texted stands
+                           alongside Called, it does not replace it.
+                           A dot on narrow screens, where the word
+                           would push the column too wide. -->
+                      <span
+                        v-if="contact.texted_at"
+                        :title="`Texted ${formatDate(contact.texted_at)}`"
+                        class="badge-blue hidden px-2 py-0.5 sm:inline-flex"
+                      >
+                        Texted
+                      </span>
+
+                      <span
+                        v-if="contact.texted_at"
+                        title="Texted"
+                        class="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400 sm:hidden"
+                      ></span>
+                    </div>
                   </td>
 
                   <!-- FEEDBACK -->
 
-                  <td class="max-w-xs px-4 py-4">
-                    <template v-if="canEditContact(contact)">
-                      <button
-                        v-if="contact.notes"
-                        type="button"
-                        @click.stop="openFeedback(contact)"
-                        class="block max-w-[220px] truncate text-left text-sm text-gray-400 transition hover:text-[#D4AF37]"
-                      >
-                        {{ contact.notes }}
-                      </button>
-
-                      <button
-                        v-else
-                        type="button"
-                        @click.stop="openFeedback(contact)"
-                        class="text-xs font-semibold text-[#D4AF37] transition hover:text-[#E2C45A]"
-                      >
-                        + Add feedback
-                      </button>
-                    </template>
-
+                  <td class="hidden px-5 py-3 xl:table-cell">
                     <p
-                      v-else
-                      class="max-w-[220px] truncate text-sm text-gray-500"
-                      :title="contact.notes || ''"
+                      v-if="contact.notes"
+                      class="truncate text-sm text-gray-400"
+                      :title="contact.notes"
                     >
-                      {{ contact.notes || "—" }}
+                      {{ contact.notes }}
                     </p>
+
+                    <span
+                      v-else-if="canEditContact(contact)"
+                      class="text-xs font-semibold text-gray-700 transition group-hover:text-[#D4AF37]"
+                    >
+                      + Add feedback
+                    </span>
+
+                    <span v-else class="text-sm text-gray-700">—</span>
+                  </td>
+
+                  <!-- FEEDBACK INDICATOR (narrow screens) -->
+
+                  <td class="px-2 py-3 text-right xl:hidden">
+                    <span
+                      v-if="contact.notes"
+                      class="text-sm text-[#D4AF37]/70"
+                      title="Has feedback"
+                    >
+                      ✎
+                    </span>
+
+                    <span
+                      v-else-if="canEditContact(contact)"
+                      class="text-sm text-gray-700"
+                      title="Add feedback"
+                    >
+                      +
+                    </span>
                   </td>
                 </tr>
               </tbody>
@@ -1384,17 +1393,13 @@ onMounted(async () => {
           <!-- PAGINATION -->
 
           <div
-            class="flex flex-col gap-3 border-t border-white/10 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+            class="glass-card mt-3 flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
           >
             <p class="text-xs text-gray-500">
               Page
-              <span class="text-gray-300">
-                {{ currentPage }}
-              </span>
+              <span class="font-semibold text-gray-300">{{ currentPage }}</span>
               of
-              <span class="text-gray-300">
-                {{ totalPages }}
-              </span>
+              <span class="font-semibold text-gray-300">{{ totalPages }}</span>
             </p>
 
             <div class="flex gap-2">
@@ -1402,22 +1407,22 @@ onMounted(async () => {
                 type="button"
                 @click="currentPage--"
                 :disabled="currentPage === 1"
-                class="rounded-lg border border-white/10 px-4 py-2 text-xs font-semibold text-gray-400 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+                class="btn-ghost btn-sm"
               >
-                Previous
+                ← Previous
               </button>
 
               <button
                 type="button"
                 @click="currentPage++"
                 :disabled="currentPage === totalPages"
-                class="rounded-lg border border-white/10 px-4 py-2 text-xs font-semibold text-gray-400 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+                class="btn-ghost btn-sm"
               >
-                Next
+                Next →
               </button>
             </div>
           </div>
-        </div>
+        </template>
       </template>
     </main>
 
@@ -1427,50 +1432,46 @@ onMounted(async () => {
 
     <div
       v-if="showFeedbackModal"
-      class="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm"
+      class="modal-backdrop"
       @click.self="closeFeedback"
     >
-      <div
-        class="w-full max-w-lg rounded-2xl border border-white/10 bg-[#101010] p-6 shadow-2xl"
-      >
-        <!-- MODAL HEADER -->
-
+      <div class="glass-panel w-full max-w-lg p-6">
         <div class="flex items-start justify-between gap-4">
-          <div>
-            <p class="text-sm font-semibold text-[#D4AF37]">Contact feedback</p>
+          <div class="flex items-center gap-3">
+            <div
+              class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#E2C45A]/30 to-[#A8861F]/20 font-black text-[#D4AF37]"
+            >
+              {{ initialOf(selectedFeedback?.name) }}
+            </div>
 
-            <h3 class="mt-1 text-lg font-bold">
-              {{ selectedFeedback?.name }}
-            </h3>
+            <div class="min-w-0">
+              <h3 class="truncate text-lg font-bold">
+                {{ selectedFeedback?.name }}
+              </h3>
 
-            <p class="mt-1 text-xs text-gray-600">
-              {{ selectedFeedback?.phone }}
-            </p>
+              <p class="mt-0.5 text-xs text-gray-500">
+                {{ selectedFeedback?.phone }}
+              </p>
+            </div>
           </div>
 
           <button
             type="button"
             @click="closeFeedback"
             :disabled="savingFeedback"
-            class="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition hover:bg-white/5 hover:text-white disabled:opacity-30"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-500 transition hover:bg-white/5 hover:text-white disabled:opacity-30"
           >
             ×
           </button>
         </div>
 
-        <!-- STATUS -->
-
-        <div class="mt-5">
-          <label
-            class="mb-2 block text-xs font-semibold uppercase tracking-wide text-gray-500"
-          >
-            Follow-up status
-          </label>
+        <div class="mt-6">
+          <label class="field-label">Follow-up status</label>
 
           <select
             v-model="feedbackStatus"
             :disabled="savingFeedback"
-            class="w-full rounded-xl border border-white/10 bg-[#0B0B0B] px-4 py-3 text-sm text-white outline-none focus:border-[#D4AF37] disabled:opacity-50"
+            class="field-select"
           >
             <option value="New">New</option>
             <option value="Called">Called</option>
@@ -1479,41 +1480,31 @@ onMounted(async () => {
           </select>
         </div>
 
-        <!-- FEEDBACK TEXT -->
-
         <div class="mt-5">
-          <label
-            class="mb-2 block text-xs font-semibold uppercase tracking-wide text-gray-500"
-          >
-            Feedback
-          </label>
+          <label class="field-label">Feedback</label>
 
           <textarea
             v-model="feedbackText"
             rows="5"
             :disabled="savingFeedback"
             placeholder="What happened when you contacted this person?"
-            class="w-full resize-none rounded-xl border border-white/10 bg-[#0B0B0B] px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20 disabled:opacity-50"
+            class="field resize-none leading-6"
           ></textarea>
         </div>
 
-        <!-- ERROR -->
-
         <div
           v-if="feedbackError"
-          class="mt-4 rounded-xl border border-red-900/50 bg-red-950/30 px-4 py-3 text-sm text-red-400"
+          class="mt-4 rounded-xl border border-red-500/25 bg-red-500/[0.07] px-4 py-3 text-sm text-red-400 backdrop-blur"
         >
           {{ feedbackError }}
         </div>
 
-        <!-- BUTTONS -->
-
-        <div class="mt-5 flex gap-2">
+        <div class="mt-6 flex gap-3">
           <button
             type="button"
             @click="closeFeedback"
             :disabled="savingFeedback"
-            class="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm font-semibold text-gray-400 transition hover:border-white/20 hover:text-white disabled:opacity-40"
+            class="btn-ghost flex-1"
           >
             Cancel
           </button>
@@ -1522,62 +1513,9 @@ onMounted(async () => {
             type="button"
             @click="saveFeedback"
             :disabled="savingFeedback"
-            class="flex-1 rounded-xl bg-[#D4AF37] px-4 py-3 text-sm font-black text-black transition hover:bg-[#E2C45A] disabled:cursor-not-allowed disabled:opacity-50"
+            class="btn-gold flex-1"
           >
             {{ savingFeedback ? "Saving..." : "Save feedback" }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- =====================================================
-         ACTION FEEDBACK PROMPT
-    ====================================================== -->
-
-    <div
-      v-if="showActionFeedbackPrompt"
-      class="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm"
-      @click.self="closeActionFeedbackPrompt"
-    >
-      <div
-        class="w-full max-w-sm rounded-2xl border border-white/10 bg-[#101010] p-6 shadow-2xl"
-      >
-        <div
-          class="flex h-12 w-12 items-center justify-center rounded-xl bg-[#D4AF37]/10 text-xl text-[#D4AF37]"
-        >
-          ✓
-        </div>
-
-        <h3 class="mt-4 text-lg font-bold">Action initiated</h3>
-
-        <p class="mt-2 text-sm leading-6 text-gray-500">
-          Would you like to add feedback for
-
-          <span class="font-semibold text-gray-300">
-            {{ selectedActionContact?.name }}
-          </span>
-
-          now?
-        </p>
-
-        <div class="mt-5 flex gap-2">
-          <button
-            type="button"
-            @click="
-              openFeedback(selectedActionContact);
-              closeActionFeedbackPrompt();
-            "
-            class="flex-1 rounded-xl bg-[#D4AF37] px-4 py-3 text-sm font-black text-black transition hover:bg-[#E2C45A]"
-          >
-            Add feedback
-          </button>
-
-          <button
-            type="button"
-            @click="closeActionFeedbackPrompt"
-            class="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm font-semibold text-gray-400 transition hover:border-white/20 hover:text-white"
-          >
-            Not now
           </button>
         </div>
       </div>
@@ -1587,45 +1525,6 @@ onMounted(async () => {
          MOBILE NAVIGATION
     ====================================================== -->
 
-    <nav
-      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl lg:hidden"
-    >
-      <div class="grid grid-cols-4 px-2 py-2">
-        <button
-          type="button"
-          @click="router.push('/dashboard')"
-          class="flex flex-col items-center gap-1 py-3 text-gray-500 transition hover:text-[#D4AF37]"
-        >
-          <span class="text-lg">⌂</span>
-          <span class="text-[11px]">Home</span>
-        </button>
-
-        <button
-          type="button"
-          @click="router.push('/record-person')"
-          class="flex flex-col items-center gap-1 py-3 text-gray-500 transition hover:text-[#D4AF37]"
-        >
-          <span class="text-lg">+</span>
-          <span class="text-[11px]">Add Outing</span>
-        </button>
-
-        <button
-          type="button"
-          class="flex flex-col items-center gap-1 py-3 text-[#D4AF37]"
-        >
-          <span class="text-lg">▣</span>
-          <span class="text-[11px] font-medium"> Contacts </span>
-        </button>
-
-        <button
-          type="button"
-          @click="router.push('/profile')"
-          class="flex flex-col items-center gap-1 py-3 text-gray-500 transition hover:text-[#D4AF37]"
-        >
-          <span class="text-lg">◉</span>
-          <span class="text-[11px] font-medium"> Profile </span>
-        </button>
-      </div>
-    </nav>
+    <BottomNav />
   </div>
 </template>

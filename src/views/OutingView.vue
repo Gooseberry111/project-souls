@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import BottomNav from "../components/BottomNav.vue";
+import { goBack } from "../lib/navigation";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
 
@@ -41,6 +43,18 @@ const canEdit = computed(() => {
     authStore.profile.is_pastor === true
   );
 });
+
+/* Mirrors the row level security rule on contacts: only the
+   person who recorded someone, or a pastor, may change or
+   remove that record. Owning the outing is not enough. */
+const canModifyContact = (contact) => {
+  if (!contact) return false;
+
+  return (
+    contact.added_by === authStore.user?.id ||
+    authStore.profile?.is_pastor === true
+  );
+};
 
 /* =========================================================
    DATE
@@ -143,34 +157,74 @@ const addFeedbackNow = () => {
    CALL / TEXT
 ========================================================= */
 
-const handleCall = (contact) => {
+const handleCall = async (contact) => {
   if (!contact?.phone) return;
 
   const link = getCallLink(contact.phone);
 
-  if (link !== "#") {
-    window.location.href = link;
+  if (link === "#") return;
 
-    // Give the browser a moment before showing the feedback prompt.
-    setTimeout(() => {
-      askForFeedback(contact);
-    }, 800);
+  // called_at is the permanent record of the act. status is left
+  // alone here: it is the follow-up outcome, and saveContact sets
+  // it once feedback is actually written down.
+  if (canModifyContact(contact)) {
+    const calledAt = new Date().toISOString();
+
+    try {
+      const { error: updateError } = await supabase
+        .from("contacts")
+        .update({ called_at: calledAt })
+        .eq("id", contact.id);
+
+      if (updateError) throw updateError;
+
+      contact.called_at = calledAt;
+    } catch (err) {
+      console.error("Error recording call:", err);
+    }
   }
+
+  window.location.href = link;
+
+  // Give the browser a moment before showing the feedback prompt.
+  setTimeout(() => {
+    askForFeedback(contact);
+  }, 800);
 };
 
-const handleText = (contact) => {
+const handleText = async (contact) => {
   if (!contact?.phone) return;
 
   const link = getSmsLink(contact);
 
-  if (link !== "#") {
-    window.location.href = link;
+  if (link === "#") return;
 
-    // Give the messaging app time to open.
-    setTimeout(() => {
-      askForFeedback(contact);
-    }, 800);
+  // Texted is recorded on its own column rather than as a status,
+  // so a contact who has already been called keeps that status
+  // and picks up a Texted badge alongside it.
+  if (canModifyContact(contact)) {
+    const textedAt = new Date().toISOString();
+
+    try {
+      const { error: updateError } = await supabase
+        .from("contacts")
+        .update({ texted_at: textedAt })
+        .eq("id", contact.id);
+
+      if (updateError) throw updateError;
+
+      contact.texted_at = textedAt;
+    } catch (err) {
+      console.error("Error recording text:", err);
+    }
   }
+
+  window.location.href = link;
+
+  // Give the messaging app time to open.
+  setTimeout(() => {
+    askForFeedback(contact);
+  }, 800);
 };
 
 /* =========================================================
@@ -388,6 +442,72 @@ const saveNewPerson = async () => {
 };
 
 /* =========================================================
+   DELETE A CONTACT
+
+   For correcting mistakes - a name entered twice, a wrong
+   number saved. Only whoever recorded the person (or a
+   pastor) can remove them, and only from here, never from
+   the church-wide Everyone list.
+========================================================= */
+
+const deleteTarget = ref(null);
+const deleting = ref(false);
+const deleteError = ref("");
+
+const confirmDeleteContact = (contact) => {
+  deleteTarget.value = contact;
+  deleteError.value = "";
+};
+
+const cancelDeleteContact = () => {
+  if (deleting.value) return;
+
+  deleteTarget.value = null;
+  deleteError.value = "";
+};
+
+const deleteContact = async () => {
+  const contact = deleteTarget.value;
+
+  if (!contact) return;
+
+  deleting.value = true;
+  deleteError.value = "";
+
+  try {
+    // Unlink first: the join row would otherwise be orphaned, or
+    // block the delete outright if the foreign key is enforced.
+    const { error: unlinkError } = await supabase
+      .from("outing_contacts")
+      .delete()
+      .eq("contact_id", contact.id);
+
+    if (unlinkError) throw unlinkError;
+
+    const { error: deleteContactError } = await supabase
+      .from("contacts")
+      .delete()
+      .eq("id", contact.id);
+
+    if (deleteContactError) throw deleteContactError;
+
+    contacts.value = contacts.value.filter((item) => item.id !== contact.id);
+
+    if (editingId.value === contact.id) {
+      cancelEditing();
+    }
+
+    deleteTarget.value = null;
+  } catch (err) {
+    console.error("Error deleting contact:", err);
+
+    deleteError.value = err.message || "Unable to delete this person.";
+  } finally {
+    deleting.value = false;
+  }
+};
+
+/* =========================================================
    MOUNT
 ========================================================= */
 
@@ -397,31 +517,31 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080808] text-white">
+  <div class="min-h-screen text-white">
     <!-- =====================================================
          HEADER
     ====================================================== -->
 
-    <header class="border-b border-white/10 bg-[#0D0D0D]">
+    <header class="glass-bar border-b">
       <div class="mx-auto max-w-4xl px-4 py-5 sm:px-6">
         <button
           type="button"
-          @click="router.back()"
-          class="mb-5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
+          @click="goBack(router, '/contacts')"
+          class="mb-5 inline-flex items-center gap-1.5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
         >
           ← Back
         </button>
 
         <div v-if="outing">
-          <p class="text-sm font-semibold text-[#D4AF37]">
+          <p class="eyebrow">
             {{ outing.location }} Branch
           </p>
 
-          <h1 class="mt-1 text-2xl font-black sm:text-3xl">
+          <h1 class="page-title mt-2">
             {{ outing.title }}
           </h1>
 
-          <p class="mt-2 text-sm text-gray-500">
+          <p class="muted mt-2">
             {{ formatDate(outing.outing_date) }}
           </p>
         </div>
@@ -432,12 +552,12 @@ onMounted(() => {
          MAIN
     ====================================================== -->
 
-    <main class="mx-auto max-w-4xl px-4 py-6 pb-24 sm:px-6 sm:py-8">
+    <main class="mx-auto max-w-4xl px-4 py-6 pb-28 sm:px-6 sm:py-8">
       <!-- Loading -->
 
       <div
         v-if="loading"
-        class="rounded-2xl border border-white/10 bg-[#101010] p-8 text-center text-sm text-gray-500"
+        class="glass-card p-8 text-center text-sm text-gray-500"
       >
         Loading contacts...
       </div>
@@ -446,7 +566,7 @@ onMounted(() => {
 
       <div
         v-else-if="error"
-        class="rounded-2xl border border-red-900/50 bg-red-950/30 p-5 text-sm text-red-400"
+        class="rounded-2xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur p-5 text-sm text-red-400"
       >
         {{ error }}
       </div>
@@ -457,7 +577,7 @@ onMounted(() => {
         ================================================== -->
 
         <div
-          class="mb-6 flex items-center justify-between rounded-2xl border border-white/10 bg-[#101010] p-4"
+          class="mb-6 flex items-center justify-between glass-card p-4"
         >
           <div>
             <p class="text-xs text-gray-500">People reached</p>
@@ -478,7 +598,7 @@ onMounted(() => {
 
         <div
           v-if="contacts.length === 0"
-          class="rounded-2xl border border-dashed border-white/10 bg-[#101010] p-8 text-center"
+          class="glass-dashed p-8 text-center"
         >
           <p class="text-gray-400">No people recorded in this outing.</p>
         </div>
@@ -491,7 +611,7 @@ onMounted(() => {
           <article
             v-for="contact in contacts"
             :key="contact.id"
-            class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            class="glass-card p-4 sm:p-5"
           >
             <!-- =================================================
                  VIEW
@@ -504,7 +624,7 @@ onMounted(() => {
                 <!-- Avatar -->
 
                 <div
-                  class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#D4AF37]/10 font-bold text-[#D4AF37]"
+                  class="icon-tile h-10 w-10 shrink-0 font-bold"
                 >
                   {{ contact.name?.charAt(0)?.toUpperCase() || "?" }}
                 </div>
@@ -529,25 +649,45 @@ onMounted(() => {
                     >
                       {{ contact.status || "New" }}
                     </span>
+
+                    <!-- Sits alongside the status, not in place of
+                         it: a person can be called and texted. -->
+                    <span
+                      v-if="contact.texted_at"
+                      class="rounded-full bg-blue-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-400"
+                    >
+                      Texted
+                    </span>
                   </div>
 
                   <!-- Phone -->
 
-                  <p class="mt-1 text-sm text-gray-500">
+                  <p class="muted mt-1">
                     {{ contact.phone || "No phone number" }}
                   </p>
                 </div>
 
-                <!-- Edit -->
+                <!-- Edit / Delete -->
 
-                <button
-                  v-if="canEdit"
-                  type="button"
-                  @click="startEditing(contact)"
-                  class="shrink-0 text-xs font-semibold text-[#D4AF37] hover:text-[#E2C45A]"
-                >
-                  Edit
-                </button>
+                <div class="flex shrink-0 items-center gap-3">
+                  <button
+                    v-if="canEdit"
+                    type="button"
+                    @click="startEditing(contact)"
+                    class="text-xs font-semibold text-[#D4AF37] hover:text-[#E2C45A]"
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    v-if="canModifyContact(contact)"
+                    type="button"
+                    @click="confirmDeleteContact(contact)"
+                    class="text-xs font-semibold text-gray-600 transition hover:text-red-400"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
 
               <!-- =================================================
@@ -623,7 +763,7 @@ onMounted(() => {
                     v-model="editForm.name"
                     type="text"
                     placeholder="Full name"
-                    class="mt-1 w-full rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                    class="field mt-1 py-3 text-sm"
                   />
                 </div>
 
@@ -635,7 +775,7 @@ onMounted(() => {
                     type="tel"
                     inputmode="tel"
                     placeholder="08012345678"
-                    class="mt-1 w-full rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                    class="field mt-1 py-3 text-sm"
                   />
                 </div>
 
@@ -646,14 +786,14 @@ onMounted(() => {
                     v-model="editForm.notes"
                     rows="3"
                     placeholder="Enter feedback..."
-                    class="mt-1 w-full resize-none rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                    class="field mt-1 resize-none py-3 text-sm"
                   ></textarea>
                 </div>
               </div>
 
               <p
                 v-if="actionError"
-                class="mt-3 rounded-xl border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-400"
+                class="mt-3 rounded-xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur px-3 py-2 text-xs text-red-400"
               >
                 {{ actionError }}
               </p>
@@ -664,7 +804,7 @@ onMounted(() => {
                 <button
                   type="button"
                   @click="cancelEditing"
-                  class="rounded-lg border border-white/10 px-4 py-2 text-xs font-semibold text-gray-400 hover:text-white"
+                  class="btn-ghost btn-sm"
                 >
                   Cancel
                 </button>
@@ -675,7 +815,7 @@ onMounted(() => {
                   type="button"
                   @click="saveContact(contact)"
                   :disabled="saving"
-                  class="rounded-lg bg-[#D4AF37] px-4 py-2 text-xs font-black text-black disabled:opacity-50"
+                  class="btn-gold btn-sm"
                 >
                   {{ saving ? "Saving..." : "Save changes" }}
                 </button>
@@ -693,14 +833,14 @@ onMounted(() => {
             v-if="!addingPerson"
             type="button"
             @click="startAddingPerson"
-            class="w-full rounded-2xl border border-dashed border-[#D4AF37]/30 bg-[#101010] px-4 py-4 text-sm font-semibold text-[#D4AF37] transition hover:border-[#D4AF37]/60 hover:bg-[#141414]"
+            class="w-full rounded-2xl border border-dashed border-[#D4AF37]/30 bg-[#D4AF37]/[0.04] backdrop-blur-xl px-4 py-4 text-sm font-semibold text-[#D4AF37] transition hover:border-[#D4AF37]/60 hover:bg-white/[0.07]"
           >
             + Add person to this outing
           </button>
 
           <div
             v-else
-            class="rounded-2xl border border-[#D4AF37]/30 bg-[#101010] p-4 sm:p-5"
+            class="rounded-2xl border border-[#D4AF37]/30 bg-[#D4AF37]/[0.05] backdrop-blur-xl p-4 sm:p-5"
           >
             <p
               class="text-xs font-semibold uppercase tracking-wide text-gray-600"
@@ -716,7 +856,7 @@ onMounted(() => {
                   v-model="newPerson.name"
                   type="text"
                   placeholder="Full name"
-                  class="mt-1 w-full rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  class="field mt-1 py-3 text-sm"
                 />
               </div>
 
@@ -728,7 +868,7 @@ onMounted(() => {
                   type="tel"
                   inputmode="tel"
                   placeholder="08012345678"
-                  class="mt-1 w-full rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  class="field mt-1 py-3 text-sm"
                 />
               </div>
 
@@ -742,14 +882,14 @@ onMounted(() => {
                   v-model="newPerson.notes"
                   rows="3"
                   placeholder="Enter feedback..."
-                  class="mt-1 w-full resize-none rounded-xl border border-white/10 bg-[#080808] px-3 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-[#D4AF37]/50"
+                  class="field mt-1 resize-none py-3 text-sm"
                 ></textarea>
               </div>
             </div>
 
             <p
               v-if="actionError"
-              class="mt-3 rounded-xl border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-400"
+              class="mt-3 rounded-xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur px-3 py-2 text-xs text-red-400"
             >
               {{ actionError }}
             </p>
@@ -758,7 +898,7 @@ onMounted(() => {
               <button
                 type="button"
                 @click="cancelAddingPerson"
-                class="rounded-lg border border-white/10 px-4 py-2 text-xs font-semibold text-gray-400 hover:text-white"
+                class="btn-ghost btn-sm"
               >
                 Cancel
               </button>
@@ -767,7 +907,7 @@ onMounted(() => {
                 type="button"
                 @click="saveNewPerson"
                 :disabled="addingSaving"
-                class="rounded-lg bg-[#D4AF37] px-4 py-2 text-xs font-black text-black disabled:opacity-50"
+                class="btn-gold btn-sm"
               >
                 {{ addingSaving ? "Adding..." : "Add person" }}
               </button>
@@ -783,17 +923,17 @@ onMounted(() => {
 
     <div
       v-if="showFeedbackPrompt"
-      class="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm"
+      class="modal-backdrop"
       @click.self="closeFeedbackPrompt"
     >
       <div
-        class="w-full max-w-md rounded-2xl border border-white/10 bg-[#101010] p-6 shadow-2xl"
+        class="w-full max-w-md glass-panel p-6"
       >
         <!-- Header -->
 
         <div class="flex items-start justify-between gap-4">
           <div>
-            <p class="text-sm font-semibold text-[#D4AF37]">
+            <p class="eyebrow">
               Outreach follow-up
             </p>
 
@@ -844,49 +984,67 @@ onMounted(() => {
     </div>
 
     <!-- =====================================================
+         DELETE CONFIRMATION
+    ====================================================== -->
+
+    <div
+      v-if="deleteTarget"
+      class="modal-backdrop z-[110]"
+      @click.self="cancelDeleteContact"
+    >
+      <div
+        class="w-full max-w-sm glass-panel p-6"
+      >
+        <div
+          class="flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10 text-xl text-red-400"
+        >
+          ⚠
+        </div>
+
+        <h3 class="mt-4 text-lg font-bold">Delete this person?</h3>
+
+        <p class="mt-2 text-sm leading-6 text-gray-500">
+          <span class="font-semibold text-gray-300">
+            {{ deleteTarget.name }}
+          </span>
+
+          will be removed from this outing and from the church-wide
+          contact list. This cannot be undone.
+        </p>
+
+        <p
+          v-if="deleteError"
+          class="mt-4 rounded-xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur px-3 py-2 text-xs text-red-400"
+        >
+          {{ deleteError }}
+        </p>
+
+        <div class="mt-5 flex gap-2">
+          <button
+            type="button"
+            @click="cancelDeleteContact"
+            :disabled="deleting"
+            class="btn-ghost flex-1"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            @click="deleteContact"
+            :disabled="deleting"
+            class="btn-danger flex-1"
+          >
+            {{ deleting ? "Deleting..." : "Delete" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =====================================================
          MOBILE NAVIGATION
     ====================================================== -->
 
-    <nav
-      class="fixed bottom-4 left-4 right-4 z-50 rounded-3xl border border-white/10 bg-white/[0.05] backdrop-blur-xl shadow-2xl lg:hidden"
-    >
-      <div class="grid grid-cols-3">
-        <!-- Home -->
-
-        <button
-          type="button"
-          @click="router.push('/dashboard')"
-          class="flex flex-col items-center gap-1 py-3 text-gray-500"
-        >
-          <span class="text-lg">⌂</span>
-
-          <span class="text-[11px]"> Home </span>
-        </button>
-
-        <!-- Add Outing -->
-
-        <button
-          type="button"
-          @click="router.push('/record-person')"
-          class="flex flex-col items-center gap-1 py-3 text-gray-500"
-        >
-          <span class="text-lg">+</span>
-
-          <span class="text-[11px]"> Add Outing </span>
-        </button>
-
-        <!-- Contacts -->
-
-        <button
-          type="button"
-          @click="router.push('/contacts')"
-          class="flex flex-col items-center gap-1 py-3 text-[#D4AF37]"
-        >
-          <span class="text-lg">▣</span>
-
-          <span class="text-[11px]"> Contacts </span>
-        </button>
-      </div>
-    </nav>
+    <BottomNav />
   </div>
 </template>

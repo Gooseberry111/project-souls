@@ -1,9 +1,12 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import BottomNav from "../components/BottomNav.vue";
+import { goBack } from "../lib/navigation";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
 import { getWeekRange, toDateKey, formatWeekLabel } from "../lib/week";
+import { loadContributorStats } from "../lib/contributors";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -27,6 +30,8 @@ const staleNewCount = ref(0);
 const weeklyContacts = ref(0);
 const weeklyOutings = ref(0);
 const topContributors = ref([]);
+const allContributors = ref([]);
+const textedContacts = ref(0);
 const weekLabel = ref("");
 const teamScope = ref("week");
 const teamStatsLoading = ref(false);
@@ -76,10 +81,13 @@ const loadTeamStats = async () => {
 
   const stats = await Promise.all(
     TEAMS.map(async (team) => {
+      // Pastors do not go on outings, so they are never part of
+      // a team's numbers. See the note in lib/contributors.js.
       const { data: members, error: membersError } = await supabase
         .from("profiles")
         .select("id")
-        .eq("team", team);
+        .eq("team", team)
+        .not("is_pastor", "is", true);
 
       if (membersError) throw membersError;
 
@@ -199,70 +207,33 @@ const loadStatusBreakdown = async () => {
   );
 
   statusBreakdown.value = breakdown;
+
+  // Texted is not a status - it is tracked separately so a person
+  // can be both called and texted - so it is counted on its own.
+  const { count: texted, error: textedError } = await supabase
+    .from("contacts")
+    .select("*", { count: "exact", head: true })
+    .not("texted_at", "is", null);
+
+  if (textedError) throw textedError;
+
+  textedContacts.value = texted || 0;
 };
 
 /* =========================================================
-   TOP CONTRIBUTORS
+   CONTRIBUTORS
+
+   The top five shown here and the full roster on
+   /pastor/contributors come from the same tally, so the
+   two pages can never disagree.
 ========================================================= */
 
-const loadTopContributors = async () => {
-  const countsByUser = {};
+const loadContributors = async () => {
+  allContributors.value = await loadContributorStats();
 
-  // Paged: a plain select caps at 1000 rows, which would quietly
-  // under-count contributors once the church passes that many contacts.
-  const pageSize = 1000;
-  let offset = 0;
-
-  while (true) {
-    const { data: page, error: pageError } = await supabase
-      .from("contacts")
-      .select("added_by")
-      .order("id", { ascending: true })
-      .range(offset, offset + pageSize - 1);
-
-    if (pageError) throw pageError;
-
-    for (const contact of page || []) {
-      if (!contact.added_by) continue;
-
-      countsByUser[contact.added_by] =
-        (countsByUser[contact.added_by] || 0) + 1;
-    }
-
-    if (!page || page.length < pageSize) break;
-
-    offset += pageSize;
-  }
-
-  const topIds = Object.entries(countsByUser)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([id]) => id);
-
-  if (!topIds.length) {
-    topContributors.value = [];
-    return;
-  }
-
-  const { data: topProfiles, error: topProfilesError } = await supabase
-    .from("profiles")
-    .select("id, full_name, team")
-    .in("id", topIds);
-
-  if (topProfilesError) throw topProfilesError;
-
-  const profileMap = {};
-
-  for (const profile of topProfiles || []) {
-    profileMap[profile.id] = profile;
-  }
-
-  topContributors.value = topIds.map((id) => ({
-    id,
-    name: profileMap[id]?.full_name || "Unknown",
-    team: profileMap[id]?.team || "",
-    count: countsByUser[id],
-  }));
+  topContributors.value = allContributors.value
+    .filter((person) => person.count > 0)
+    .slice(0, 5);
 };
 
 /* =========================================================
@@ -352,7 +323,7 @@ const loadSummary = async () => {
       loadTeamStats(),
       loadBranchStats(),
       loadStatusBreakdown(),
-      loadTopContributors(),
+      loadContributors(),
     ]);
   } catch (err) {
     console.error("Pastor summary error:", err);
@@ -462,6 +433,7 @@ const exportPdf = () => {
         ["Week", weekLabel.value],
         ["Weekly Contacts", weeklyContacts.value],
         ["Weekly Outings", weeklyOutings.value],
+        ["Contacts Texted", textedContacts.value],
         ["Stale Contacts", staleNewCount.value],
       ],
       ...tableStyles,
@@ -510,14 +482,22 @@ const exportPdf = () => {
       ...tableStyles,
     });
 
-    // Top contributors
+    // Every contributor, not just the top five
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...black);
+    doc.text("All Contributors", 14, doc.lastAutoTable.finalY + 9);
+
     autoTable(doc, {
-      startY: doc.lastAutoTable.finalY + 12,
-      head: [["Name", "Team", "Contacts"]],
-      body: topContributors.value.map((person) => [
+      startY: doc.lastAutoTable.finalY + 14,
+      head: [["Name", "Team", "This Week", "Total", "Called", "Texted"]],
+      body: allContributors.value.map((person) => [
         person.name,
         person.team,
+        person.weekCount,
         person.count,
+        person.calledCount,
+        person.textedCount,
       ]),
       ...tableStyles,
     });
@@ -566,36 +546,43 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080808] text-white">
+  <div class="min-h-screen text-white">
     <!-- Header -->
-    <header class="border-b border-white/10 bg-[#0D0D0D]">
+    <header class="glass-bar border-b">
       <div class="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
         <button
           type="button"
-          @click="router.push('/dashboard')"
-          class="mb-5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
+          @click="goBack(router)"
+          class="mb-5 inline-flex items-center gap-1.5 text-sm text-gray-500 transition hover:text-[#D4AF37]"
         >
-          ← Back to dashboard
+          ← Back
         </button>
 
-        <p class="text-sm font-semibold text-[#D4AF37]">Church oversight</p>
-
-        <h1 class="mt-1 text-2xl font-black sm:text-3xl">Pastor Summary</h1>
-
-        <p class="mt-2 text-sm text-gray-500">
-          Church-wide evangelism and follow-up overview.
-        </p>
-        <button
-          @click="exportPdf"
-          :disabled="exporting || loading"
-          class="rounded-xl border border-[#D4AF37]/30 bg-[#101010] px-4 py-2 text-sm font-semibold text-[#D4AF37] disabled:opacity-50"
+        <div
+          class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
         >
-          {{ exporting ? "Preparing..." : "Export PDF" }}
-        </button>
+          <div>
+            <p class="eyebrow">Church oversight</p>
+
+            <h1 class="page-title mt-2">Pastor Summary</h1>
+
+            <p class="muted mt-2">
+              Church-wide evangelism and follow-up overview.
+            </p>
+          </div>
+
+          <button
+            @click="exportPdf"
+            :disabled="exporting || loading"
+            class="btn-outline-gold shrink-0 self-start sm:self-auto"
+          >
+            {{ exporting ? "Preparing..." : "⤓ Export PDF" }}
+          </button>
+        </div>
       </div>
     </header>
 
-    <main class="mx-auto max-w-7xl px-4 py-6 pb-24 sm:px-6 sm:py-8 lg:px-8">
+    <main class="mx-auto max-w-7xl px-4 py-6 pb-28 sm:px-6 sm:py-8 lg:px-8">
       <!-- Loading -->
       <!-- Loading Skeletons -->
       <div v-if="loading" class="animate-pulse">
@@ -604,7 +591,7 @@ onMounted(() => {
           <div
             v-for="i in 4"
             :key="`stat-skeleton-${i}`"
-            class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            class="glass-card p-4 sm:p-5"
           >
             <div class="h-3 w-24 rounded bg-white/10"></div>
             <div class="mt-3 h-8 w-16 rounded bg-white/10"></div>
@@ -622,7 +609,7 @@ onMounted(() => {
             <div
               v-for="i in 4"
               :key="`team-skeleton-${i}`"
-              class="rounded-2xl border border-white/10 bg-[#101010] p-5"
+              class="glass-card p-5"
             >
               <div class="h-4 w-32 rounded bg-white/10"></div>
               <div class="mt-5 h-8 w-14 rounded bg-white/10"></div>
@@ -652,7 +639,7 @@ onMounted(() => {
             <div
               v-for="i in 2"
               :key="`branch-skeleton-${i}`"
-              class="rounded-2xl border border-white/10 bg-[#101010] p-5"
+              class="glass-card p-5"
             >
               <div class="h-3 w-20 rounded bg-white/10"></div>
               <div class="mt-3 h-8 w-14 rounded bg-white/10"></div>
@@ -676,7 +663,7 @@ onMounted(() => {
             <div
               v-for="i in 5"
               :key="`first-timer-skeleton-${i}`"
-              class="rounded-2xl border border-white/10 bg-[#101010] p-4"
+              class="glass-card p-4"
             >
               <div class="flex items-start justify-between gap-4">
                 <div class="flex-1">
@@ -701,7 +688,7 @@ onMounted(() => {
             <div
               v-for="i in 2"
               :key="`weekly-skeleton-${i}`"
-              class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+              class="glass-card p-4 sm:p-5"
             >
               <div class="h-3 w-24 rounded bg-white/10"></div>
               <div class="mt-3 h-8 w-14 rounded bg-white/10"></div>
@@ -724,7 +711,7 @@ onMounted(() => {
             <div
               v-for="i in 4"
               :key="`status-skeleton-${i}`"
-              class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+              class="glass-card p-4 sm:p-5"
             >
               <div class="h-3 w-20 rounded bg-white/10"></div>
               <div class="mt-3 h-8 w-12 rounded bg-white/10"></div>
@@ -743,7 +730,7 @@ onMounted(() => {
             <div
               v-for="i in 5"
               :key="`contributor-skeleton-${i}`"
-              class="flex items-center gap-4 rounded-2xl border border-white/10 bg-[#101010] p-4"
+              class="flex items-center gap-4 glass-card p-4"
             >
               <div class="h-10 w-10 shrink-0 rounded-xl bg-white/10"></div>
 
@@ -761,7 +748,7 @@ onMounted(() => {
       <!-- Error -->
       <div
         v-else-if="error"
-        class="rounded-2xl border border-red-900/50 bg-red-950/30 p-5 text-sm text-red-400"
+        class="rounded-2xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur p-5 text-sm text-red-400"
       >
         {{ error }}
       </div>
@@ -770,7 +757,7 @@ onMounted(() => {
         <!-- Main Stats -->
         <section class="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div
-            class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            class="glass-card p-4 sm:p-5"
           >
             <p class="text-xs text-gray-500 sm:text-sm">Total Contacts</p>
 
@@ -780,7 +767,7 @@ onMounted(() => {
           </div>
 
           <div
-            class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            class="glass-card p-4 sm:p-5"
           >
             <p class="text-xs text-gray-500 sm:text-sm">Total Outings</p>
 
@@ -790,7 +777,7 @@ onMounted(() => {
           </div>
 
           <div
-            class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            class="glass-card p-4 sm:p-5"
           >
             <p class="text-xs text-gray-500 sm:text-sm">First Timers</p>
 
@@ -800,7 +787,7 @@ onMounted(() => {
           </div>
 
           <div
-            class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+            class="glass-card p-4 sm:p-5"
           >
             <p class="text-xs text-gray-500 sm:text-sm">Follow-up Rate</p>
 
@@ -814,11 +801,11 @@ onMounted(() => {
         <section class="mt-8">
           <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
             <div>
-              <p class="text-sm font-semibold text-[#D4AF37]">
+              <p class="eyebrow">
                 Team performance
               </p>
 
-              <h2 class="mt-1 text-xl font-bold">Evangelism Teams</h2>
+              <h2 class="section-title mt-2">Evangelism Teams</h2>
 
               <p class="mt-1 text-xs text-gray-600">
                 <template v-if="teamScope === 'week'">
@@ -830,7 +817,7 @@ onMounted(() => {
             </div>
 
             <div
-              class="flex shrink-0 rounded-xl border border-white/10 bg-[#101010] p-1"
+              class="flex shrink-0 rounded-xl border border-white/10 bg-white/[0.035] backdrop-blur-xl p-1"
             >
               <button
                 type="button"
@@ -869,7 +856,7 @@ onMounted(() => {
             <div
               v-for="team in teamStats"
               :key="team.team"
-              class="rounded-2xl border border-white/10 bg-[#101010] p-5"
+              class="glass-card p-5"
             >
               <h3 class="font-bold">
                 {{ team.team }}
@@ -903,18 +890,18 @@ onMounted(() => {
         <!-- Branches -->
         <section class="mt-8">
           <div class="mb-4">
-            <p class="text-sm font-semibold text-[#D4AF37]">
+            <p class="eyebrow">
               Branch performance
             </p>
 
-            <h2 class="mt-1 text-xl font-bold">Outreach by Branch</h2>
+            <h2 class="section-title mt-2">Outreach by Branch</h2>
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div
               v-for="branch in branchStats"
               :key="branch.branch"
-              class="rounded-2xl border border-white/10 bg-[#101010] p-5"
+              class="glass-card p-5"
             >
               <p class="text-sm text-gray-500">
                 {{ branch.branch }}
@@ -933,9 +920,9 @@ onMounted(() => {
         <section class="mt-8">
           <div class="mb-4 flex items-end justify-between">
             <div>
-              <p class="text-sm font-semibold text-[#D4AF37]">First Timers</p>
+              <p class="eyebrow">First Timers</p>
 
-              <h2 class="mt-1 text-xl font-bold">Recent Entries</h2>
+              <h2 class="section-title mt-2">Recent Entries</h2>
             </div>
 
             <button
@@ -949,7 +936,7 @@ onMounted(() => {
 
           <div
             v-if="recentFirstTimers.length === 0"
-            class="rounded-2xl border border-dashed border-white/10 bg-[#101010] p-6 text-center text-sm text-gray-500"
+            class="glass-dashed p-6 text-center text-sm text-gray-500"
           >
             No first timers recorded yet.
           </div>
@@ -958,7 +945,7 @@ onMounted(() => {
             <div
               v-for="person in recentFirstTimers"
               :key="person.id"
-              class="rounded-2xl border border-white/10 bg-[#101010] p-4"
+              class="glass-card p-4"
             >
               <div class="flex items-start justify-between gap-4">
                 <div>
@@ -966,7 +953,7 @@ onMounted(() => {
                     {{ person.full_name }}
                   </p>
 
-                  <p class="mt-1 text-sm text-gray-500">
+                  <p class="muted mt-1">
                     {{ person.phone }}
                   </p>
                 </div>
@@ -982,9 +969,9 @@ onMounted(() => {
         <!-- New: This Week -->
         <section class="mt-8">
           <div class="mb-4">
-            <p class="text-sm font-semibold text-[#D4AF37]">Current week</p>
+            <p class="eyebrow">Current week</p>
 
-            <h2 class="mt-1 text-xl font-bold">This Week's Activity</h2>
+            <h2 class="section-title mt-2">This Week's Activity</h2>
 
             <p v-if="weekLabel" class="mt-1 text-xs text-gray-600">
               {{ weekLabel }} &middot; resets Friday night
@@ -993,7 +980,7 @@ onMounted(() => {
 
           <div class="grid grid-cols-2 gap-3">
             <div
-              class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+              class="glass-card p-4 sm:p-5"
             >
               <p class="text-xs text-gray-500 sm:text-sm">Contacts Added</p>
 
@@ -1003,7 +990,7 @@ onMounted(() => {
             </div>
 
             <div
-              class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+              class="glass-card p-4 sm:p-5"
             >
               <p class="text-xs text-gray-500 sm:text-sm">Outings</p>
 
@@ -1018,16 +1005,16 @@ onMounted(() => {
         <section class="mt-8">
           <div class="mb-4 flex items-end justify-between">
             <div>
-              <p class="text-sm font-semibold text-[#D4AF37]">
+              <p class="eyebrow">
                 Follow-up health
               </p>
 
-              <h2 class="mt-1 text-xl font-bold">Contact Status Breakdown</h2>
+              <h2 class="section-title mt-2">Contact Status Breakdown</h2>
             </div>
 
             <div
               v-if="staleNewCount > 0"
-              class="rounded-full border border-red-900/50 bg-red-950/30 px-3 py-1 text-xs font-semibold text-red-400"
+              class="rounded-full border border-red-500/25 bg-red-500/[0.07] backdrop-blur px-3 py-1 text-xs font-semibold text-red-400"
             >
               {{ staleNewCount }} uncalled 3+ days
             </div>
@@ -1037,7 +1024,7 @@ onMounted(() => {
             <div
               v-for="item in statusBreakdown"
               :key="item.status"
-              class="rounded-2xl border border-white/10 bg-[#101010] p-4 sm:p-5"
+              class="glass-card p-4 sm:p-5"
             >
               <p class="text-xs text-gray-500 sm:text-sm">
                 {{ item.status }}
@@ -1047,22 +1034,44 @@ onMounted(() => {
                 {{ item.count }}
               </p>
             </div>
+
+            <!-- Texted sits alongside the statuses rather than among
+                 them: a person can be both called and texted. -->
+            <div
+              class="rounded-2xl border border-blue-500/20 bg-white/[0.035] backdrop-blur-xl p-4 sm:p-5"
+            >
+              <p class="text-xs text-gray-500 sm:text-sm">Texted</p>
+
+              <p class="mt-2 text-2xl font-black text-blue-400">
+                {{ textedContacts }}
+              </p>
+            </div>
           </div>
         </section>
 
         <!-- New: Top Contributors -->
         <section class="mt-8">
-          <div class="mb-4">
-            <p class="text-sm font-semibold text-[#D4AF37]">
-              Individual impact
-            </p>
+          <div class="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <p class="eyebrow">
+                Individual impact
+              </p>
 
-            <h2 class="mt-1 text-xl font-bold">Top Contributors</h2>
+              <h2 class="section-title mt-2">Top Contributors</h2>
+            </div>
+
+            <button
+              type="button"
+              @click="router.push('/pastor/contributors')"
+              class="shrink-0 rounded-xl border border-[#D4AF37]/30 bg-white/[0.035] backdrop-blur-xl px-4 py-2 text-xs font-semibold text-[#D4AF37] transition hover:border-[#D4AF37]/60 hover:bg-white/[0.07] sm:text-sm"
+            >
+              All contributors →
+            </button>
           </div>
 
           <div
             v-if="topContributors.length === 0"
-            class="rounded-2xl border border-dashed border-white/10 bg-[#101010] p-6 text-center text-sm text-gray-500"
+            class="glass-dashed p-6 text-center text-sm text-gray-500"
           >
             No contacts recorded yet.
           </div>
@@ -1071,10 +1080,10 @@ onMounted(() => {
             <div
               v-for="(person, index) in topContributors"
               :key="person.id"
-              class="flex items-center gap-4 rounded-2xl border border-white/10 bg-[#101010] p-4"
+              class="flex items-center gap-4 glass-card p-4"
             >
               <div
-                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#D4AF37]/10 font-black text-[#D4AF37]"
+                class="icon-tile h-10 w-10 shrink-0 font-black"
               >
                 {{ index + 1 }}
               </div>
@@ -1097,5 +1106,7 @@ onMounted(() => {
         </section>
       </template>
     </main>
+
+    <BottomNav />
   </div>
 </template>

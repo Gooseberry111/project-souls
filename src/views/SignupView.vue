@@ -37,7 +37,7 @@ const handleSignup = async () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080808] text-white lg:grid lg:grid-cols-2">
+  <div class="min-h-screen text-white lg:grid lg:grid-cols-2">
     <!-- Branding -->
     <div class="relative hidden overflow-hidden lg:flex lg:min-h-screen">
       <div
@@ -54,9 +54,13 @@ const handleSignup = async () => {
       <div class="relative z-10 flex w-full flex-col justify-between p-12">
         <div class="flex items-center gap-3">
           <div
-            class="flex h-11 w-11 items-center justify-center rounded-xl bg-[#D4AF37] font-black text-black"
+            class="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl ring-1 ring-[#D4AF37]/30"
           >
-            PS
+            <img
+              src="/TCC.jpeg"
+              alt="Transfiguration Church"
+              class="h-11 w-11 object-cover"
+            />
           </div>
 
           <div>
@@ -72,7 +76,7 @@ const handleSignup = async () => {
             Transfiguration Gospel Church International
           </p>
 
-          <h1 class="text-5xl font-black leading-tight">
+          <h1 class="text-5xl font-black leading-tight tracking-tight">
             Go out ||
             <span class="text-[#D4AF37]"> Reach souls ||</span>
             Advance the kingdom.
@@ -96,9 +100,13 @@ const handleSignup = async () => {
         <!-- Mobile logo -->
         <div class="mb-10 flex items-center gap-3 lg:hidden">
           <div
-            class="flex h-11 w-11 items-center justify-center rounded-xl bg-[#D4AF37] font-black text-black"
+            class="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl ring-1 ring-[#D4AF37]/30"
           >
-            PS
+            <img
+              src="/TCC.jpeg"
+              alt="Transfiguration Church"
+              class="h-11 w-11 object-cover"
+            />
           </div>
 
           <div>
@@ -110,9 +118,9 @@ const handleSignup = async () => {
         <div class="mb-8">
           <div class="mb-5 h-1 w-10 rounded-full bg-[#D4AF37]"></div>
 
-          <p class="text-sm font-semibold text-[#D4AF37]">Join Project Souls</p>
+          <p class="eyebrow">Join Project Souls</p>
 
-          <h2 class="mt-2 text-3xl font-black sm:text-4xl">Create account</h2>
+          <h2 class="mt-2 text-3xl font-black sm:text-4xl gold-gradient-text">Create account</h2>
 
           <p class="mt-3 text-sm text-gray-500">
             Set up your account to start recording your outreach.
@@ -121,7 +129,7 @@ const handleSignup = async () => {
 
         <form @submit.prevent="handleSignup" class="space-y-4">
           <div>
-            <label class="mb-2 block text-sm font-medium text-gray-300">
+            <label class="field-label">
               Full name
             </label>
 
@@ -130,12 +138,12 @@ const handleSignup = async () => {
               type="text"
               required
               placeholder="Enter your full name"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+              class="field"
             />
           </div>
 
           <div>
-            <label class="mb-2 block text-sm font-medium text-gray-300">
+            <label class="field-label">
               Phone number
             </label>
 
@@ -143,12 +151,12 @@ const handleSignup = async () => {
               v-model="phone"
               type="tel"
               placeholder="Enter your phone number"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+              class="field"
             />
           </div>
 
           <div>
-            <label class="mb-2 block text-sm font-medium text-gray-300">
+            <label class="field-label">
               Email address
             </label>
 
@@ -157,12 +165,12 @@ const handleSignup = async () => {
               type="email"
               required
               placeholder="you@example.com"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+              class="field"
             />
           </div>
 
           <div>
-            <label class="mb-2 block text-sm font-medium text-gray-300">
+            <label class="field-label">
               Password
             </label>
 
@@ -172,7 +180,7 @@ const handleSignup = async () => {
               required
               minlength="6"
               placeholder="Create a password"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+              class="field"
             />
 
             <p class="mt-1.5 text-xs text-gray-600">Minimum 6 characters</p>
@@ -180,7 +188,7 @@ const handleSignup = async () => {
 
           <div
             v-if="error"
-            class="rounded-xl border border-red-900/50 bg-red-950/30 px-4 py-3 text-sm text-red-400"
+            class="rounded-xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur px-4 py-3 text-sm text-red-400"
           >
             {{ error }}
           </div>

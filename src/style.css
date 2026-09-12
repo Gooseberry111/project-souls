@@ -3,29 +3,104 @@
 @tailwind utilities;
 
 /* =========================================================
+   DESIGN TOKENS
+
+   Church colours: gold on black. Everything below is built
+   from these two, so a change here moves the whole app.
+========================================================= */
+
+:root {
+  --gold: #d4af37;
+  --gold-soft: #e2c45a;
+  --gold-deep: #a8861f;
+
+  --ink: #050505;
+  --ink-raised: #0c0c0c;
+
+  /* Glass surfaces: translucent white over the black ground,
+     so anything behind them (the gold ambience, a sticky
+     header) shows through instead of being boxed out. */
+  --glass: rgba(255, 255, 255, 0.035);
+  --glass-strong: rgba(255, 255, 255, 0.06);
+  --glass-line: rgba(255, 255, 255, 0.09);
+  --glass-line-lit: rgba(212, 175, 55, 0.35);
+}
+
+/* =========================================================
    GLOBAL
 ========================================================= */
 
 html,
-body,
+body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--ink);
+}
+
+/* Deliberately transparent: an opaque #app would paint over the
+   gold ambience below and every glass surface would have
+   nothing to blur. */
 #app {
   width: 100%;
   min-height: 100%;
   margin: 0;
   padding: 0;
-  background: #080808;
+  background: transparent;
 }
 
 body {
-  font-family: Inter, Arial, Helvetica, sans-serif;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Arial,
+    sans-serif;
 
   color: white;
-  background: #080808;
+  background: var(--ink);
 
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Two soft gold pools behind everything. Fixed, so they stay
+   put while content scrolls over the glass. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+
+  background:
+    radial-gradient(
+      60rem 60rem at 12% -10%,
+      rgba(212, 175, 55, 0.1),
+      transparent 60%
+    ),
+    radial-gradient(
+      45rem 45rem at 105% 8%,
+      rgba(212, 175, 55, 0.06),
+      transparent 60%
+    );
+}
+
+#app {
+  position: relative;
+  z-index: 1;
+}
+
+/* Headings read tighter and heavier than body copy. */
+h1,
+h2,
+h3,
+h4 {
+  letter-spacing: -0.02em;
 }
 
 /* =========================================================
@@ -50,16 +125,166 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #080808;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(212, 175, 55, 0.4);
+  background: rgba(212, 175, 55, 0.35);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(212, 175, 55, 0.7);
+  background: rgba(212, 175, 55, 0.6);
+}
+
+/* =========================================================
+   COMPONENTS
+
+   Named classes rather than repeated utility strings: the
+   same card was written a dozen slightly different ways
+   across the views, which is where the inconsistencies came
+   from.
+========================================================= */
+
+@layer components {
+  /* ---- Surfaces ---- */
+
+  .glass {
+    @apply border border-white/[0.09] bg-white/[0.035] backdrop-blur-xl;
+  }
+
+  .glass-card {
+    @apply rounded-2xl border border-white/[0.09] bg-white/[0.035] shadow-[0_8px_32px_-12px_rgba(0,0,0,0.7)] backdrop-blur-xl;
+  }
+
+  /* Same card, but it responds to the pointer. For anything
+     clickable: quick actions, list rows, outing cards. */
+  .glass-card-interactive {
+    @apply glass-card transition duration-200 hover:border-[#D4AF37]/40 hover:bg-white/[0.06] hover:shadow-[0_12px_40px_-12px_rgba(212,175,55,0.18)] active:scale-[0.995];
+  }
+
+  .glass-panel {
+    @apply rounded-3xl border border-white/[0.09] bg-white/[0.04] shadow-[0_16px_50px_-20px_rgba(0,0,0,0.8)] backdrop-blur-2xl;
+  }
+
+  /* The one card on a screen that should pull the eye. */
+  .glass-card-gold {
+    @apply relative overflow-hidden rounded-2xl border border-[#D4AF37]/30 bg-gradient-to-br from-[#D4AF37]/[0.12] via-white/[0.03] to-transparent shadow-[0_8px_32px_-12px_rgba(0,0,0,0.7)] backdrop-blur-xl;
+  }
+
+  .glass-dashed {
+    @apply rounded-2xl border border-dashed border-white/15 bg-white/[0.02] backdrop-blur-xl;
+  }
+
+  /* Sticky page headers and bottom bars. */
+  .glass-bar {
+    @apply border-white/[0.09] bg-[#080808]/70 backdrop-blur-2xl;
+  }
+
+  /* ---- Type ---- */
+
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-[#D4AF37];
+  }
+
+  .page-title {
+    @apply text-2xl font-black sm:text-3xl;
+  }
+
+  .section-title {
+    @apply text-lg font-bold sm:text-xl;
+  }
+
+  .muted {
+    @apply text-sm text-gray-500;
+  }
+
+  .gold-gradient-text {
+    @apply bg-gradient-to-br from-[#F2DA8B] via-[#D4AF37] to-[#A8861F] bg-clip-text text-transparent;
+  }
+
+  /* ---- Buttons ---- */
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition duration-200 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-gold {
+    @apply btn bg-gradient-to-b from-[#E2C45A] to-[#C9A331] font-black text-black shadow-[0_6px_20px_-8px_rgba(212,175,55,0.7)] hover:brightness-110 active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply btn border border-white/10 bg-white/[0.03] text-gray-300 backdrop-blur hover:border-white/20 hover:bg-white/[0.07] hover:text-white active:scale-[0.98];
+  }
+
+  .btn-outline-gold {
+    @apply btn border border-[#D4AF37]/30 bg-[#D4AF37]/[0.06] text-[#D4AF37] backdrop-blur hover:border-[#D4AF37]/60 hover:bg-[#D4AF37]/[0.12] active:scale-[0.98];
+  }
+
+  .btn-danger {
+    @apply btn bg-red-500/90 font-black text-white hover:bg-red-500 active:scale-[0.98];
+  }
+
+  .btn-sm {
+    @apply rounded-lg px-3 py-2 text-xs;
+  }
+
+  /* ---- Forms ---- */
+
+  .field {
+    @apply w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37]/60 focus:bg-white/[0.06] focus:ring-2 focus:ring-[#D4AF37]/20 disabled:opacity-50;
+  }
+
+  /* Native selects need an opaque popup background, so they
+     cannot use the translucent field treatment. */
+  .field-select {
+    @apply w-full rounded-xl border border-white/10 bg-[#0E0E0E] px-4 py-3 text-sm text-white outline-none transition focus:border-[#D4AF37]/60 focus:ring-2 focus:ring-[#D4AF37]/20 disabled:opacity-50;
+  }
+
+  .field-label {
+    @apply mb-2 block text-xs font-semibold uppercase tracking-wide text-gray-500;
+  }
+
+  /* ---- Badges ---- */
+
+  .badge {
+    @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-semibold;
+  }
+
+  .badge-gold {
+    @apply badge border-[#D4AF37]/30 bg-[#D4AF37]/10 text-[#D4AF37];
+  }
+
+  .badge-green {
+    @apply badge border-green-500/25 bg-green-500/10 text-green-400;
+  }
+
+  .badge-blue {
+    @apply badge border-blue-500/25 bg-blue-500/10 text-blue-400;
+  }
+
+  .badge-red {
+    @apply badge border-red-500/25 bg-red-500/10 text-red-400;
+  }
+
+  .badge-neutral {
+    @apply badge border-white/10 bg-white/[0.04] text-gray-400;
+  }
+
+  /* ---- Bits ---- */
+
+  .icon-tile {
+    @apply flex items-center justify-center rounded-xl border border-[#D4AF37]/20 bg-[#D4AF37]/10 text-[#D4AF37];
+  }
+
+  .divider {
+    @apply h-px w-full bg-gradient-to-r from-transparent via-white/10 to-transparent;
+  }
+
+  /* Full-screen modal backdrop, used by every dialog. */
+  .modal-backdrop {
+    @apply fixed inset-0 z-[100] flex items-center justify-center bg-black/75 px-4 backdrop-blur-md;
+  }
 }
 
 /* =========================================================
@@ -78,13 +303,23 @@ textarea:focus,
 select:focus {
   outline: none;
 }
+
+/* iOS zooms the page in whenever a focused field is under 16px,
+   and it never zooms back out on blur - which is why writing
+   feedback left the whole app magnified.
+ *
+ * !important is load-bearing here: a utility class like
+ * `text-sm` on a textarea is a class selector and outranks a
+ * bare element rule, so without it Tailwind's 14px wins and the
+ * zoom comes back. */
 @media (max-width: 767px) {
   input,
   textarea,
   select {
-    font-size: 16px;
+    font-size: 16px !important;
   }
 }
+
 /* =========================================================
    LINKS
 ========================================================= */
@@ -101,6 +336,32 @@ a {
 img {
   display: block;
   max-width: 100%;
+}
+
+/* =========================================================
+   MOTION
+========================================================= */
+
+.rise {
+  animation: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .skeleton::after {
+    animation: none;
+  }
 }
 
 /* =========================================================

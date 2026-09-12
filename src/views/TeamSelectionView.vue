@@ -65,7 +65,7 @@ const confirmTeam = async () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080808] px-4 py-8 text-white sm:px-6 sm:py-12">
+  <div class="min-h-screen px-4 py-8 text-white sm:px-6 sm:py-12">
     <main class="mx-auto max-w-3xl">
       <!-- Header -->
       <div class="mb-8 text-center">
@@ -96,7 +96,7 @@ const confirmTeam = async () => {
             'rounded-2xl border p-5 text-left transition sm:p-6',
             selectedTeam?.name === team.name
               ? 'border-[#D4AF37] bg-[#D4AF37]/10'
-              : 'border-white/10 bg-[#101010] hover:border-[#D4AF37]/50',
+              : 'border-white/10 bg-white/[0.035] backdrop-blur-xl hover:border-[#D4AF37]/50',
           ]"
         >
           <div class="flex items-start justify-between gap-4">
@@ -112,7 +112,7 @@ const confirmTeam = async () => {
                 {{ team.name }}
               </h2>
 
-              <p class="mt-2 text-sm text-gray-500">Led by {{ team.leader }}</p>
+              <p class="muted mt-2">Led by {{ team.leader }}</p>
             </div>
 
             <div
@@ -137,7 +137,7 @@ const confirmTeam = async () => {
       <!-- Confirmation -->
       <div
         v-if="selectedTeam"
-        class="mt-6 rounded-2xl border border-[#D4AF37]/30 bg-[#101010] p-5 sm:p-6"
+        class="mt-6 rounded-2xl border border-[#D4AF37]/30 bg-[#D4AF37]/[0.05] backdrop-blur-xl p-5 sm:p-6"
       >
         <p class="text-sm text-gray-400">You selected</p>
 
@@ -165,7 +165,7 @@ const confirmTeam = async () => {
             type="button"
             @click="confirmTeam"
             :disabled="loading"
-            class="w-full rounded-xl bg-[#D4AF37] px-4 py-3.5 text-sm font-black text-black transition hover:bg-[#E2C45A] disabled:cursor-not-allowed disabled:opacity-50"
+            class="btn-gold w-full py-3.5"
           >
             {{ loading ? "Saving..." : "Confirm team" }}
           </button>
@@ -175,7 +175,7 @@ const confirmTeam = async () => {
       <!-- Error -->
       <div
         v-if="error"
-        class="mt-5 rounded-xl border border-red-900/50 bg-red-950/30 px-4 py-3 text-sm text-red-400"
+        class="mt-5 rounded-xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur px-4 py-3 text-sm text-red-400"
       >
         {{ error }}
       </div>

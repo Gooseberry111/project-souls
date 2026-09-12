@@ -21,8 +21,11 @@ const handleLogin = async () => {
     // Make sure we have the latest profile
     await authStore.fetchProfile();
 
-    // New users must select a team before entering the dashboard
-    if (!authStore.profile?.team) {
+    // New members must pick a team before entering the dashboard.
+    // A pastor is not on an evangelism team, so he would be sent
+    // here on every single login and, once forced to choose, start
+    // showing up in that team's rankings.
+    if (!authStore.profile?.team && !authStore.profile?.is_pastor) {
       router.push("/team-selection");
       return;
     }
@@ -39,7 +42,7 @@ const handleLogin = async () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#080808] text-white lg:grid lg:grid-cols-2">
+  <div class="min-h-screen text-white lg:grid lg:grid-cols-2">
     <!-- Branding -->
     <div class="relative hidden overflow-hidden lg:flex lg:min-h-screen">
       <div
@@ -57,9 +60,13 @@ const handleLogin = async () => {
       <div class="relative z-10 flex w-full flex-col justify-between p-12">
         <div class="flex items-center gap-3">
           <div
-            class="flex h-11 w-11 items-center justify-center rounded-xl bg-[#D4AF37] font-black text-black"
+            class="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl ring-1 ring-[#D4AF37]/30"
           >
-            PS
+            <img
+              src="/TCC.jpeg"
+              alt="Transfiguration Church"
+              class="h-11 w-11 object-cover"
+            />
           </div>
 
           <div>
@@ -75,7 +82,7 @@ const handleLogin = async () => {
             Evangelism Management
           </p>
 
-          <h1 class="text-5xl font-black leading-tight">
+          <h1 class="text-5xl font-black leading-tight tracking-tight">
             Every conversation
             <span class="text-[#D4AF37]"> matters. </span>
           </h1>
@@ -98,9 +105,13 @@ const handleLogin = async () => {
         <!-- Mobile logo -->
         <div class="mb-12 flex items-center gap-3 lg:hidden">
           <div
-            class="flex h-11 w-11 items-center justify-center rounded-xl bg-[#D4AF37] font-black text-black"
+            class="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl ring-1 ring-[#D4AF37]/30"
           >
-            PS
+            <img
+              src="/TCC.jpeg"
+              alt="Transfiguration Church"
+              class="h-11 w-11 object-cover"
+            />
           </div>
 
           <div>
@@ -112,9 +123,9 @@ const handleLogin = async () => {
         <div class="mb-8">
           <div class="mb-5 h-1 w-10 rounded-full bg-[#D4AF37]"></div>
 
-          <p class="text-sm font-semibold text-[#D4AF37]">Welcome back</p>
+          <p class="eyebrow">Welcome back</p>
 
-          <h2 class="mt-2 text-3xl font-black sm:text-4xl">Sign in</h2>
+          <h2 class="mt-2 text-3xl font-black sm:text-4xl gold-gradient-text">Sign in</h2>
 
           <p class="mt-3 text-sm text-gray-500">
             Continue to your Project Souls dashboard.
@@ -124,7 +135,7 @@ const handleLogin = async () => {
         <form @submit.prevent="handleLogin" class="space-y-5">
           <!-- Email -->
           <div>
-            <label class="mb-2 block text-sm font-medium text-gray-300">
+            <label class="field-label">
               Email address
             </label>
 
@@ -134,13 +145,13 @@ const handleLogin = async () => {
               required
               autocomplete="email"
               placeholder="you@example.com"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+              class="field"
             />
           </div>
 
           <!-- Password -->
           <div>
-            <label class="mb-2 block text-sm font-medium text-gray-300">
+            <label class="field-label">
               Password
             </label>
 
@@ -150,14 +161,14 @@ const handleLogin = async () => {
               required
               autocomplete="current-password"
               placeholder="Enter your password"
-              class="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-base text-white outline-none transition placeholder:text-gray-600 focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20"
+              class="field"
             />
           </div>
 
           <!-- Error -->
           <div
             v-if="error"
-            class="rounded-xl border border-red-900/50 bg-red-950/30 px-4 py-3 text-sm text-red-400"
+            class="rounded-xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur px-4 py-3 text-sm text-red-400"
           >
             {{ error }}
           </div>
@@ -166,7 +177,7 @@ const handleLogin = async () => {
           <button
             type="submit"
             :disabled="loading"
-            class="w-full rounded-xl bg-[#D4AF37] px-4 py-3.5 text-sm font-black text-black transition hover:bg-[#E2C45A] disabled:cursor-not-allowed disabled:opacity-50"
+            class="btn-gold w-full py-3.5"
           >
             {{ loading ? "Signing in..." : "Sign in" }}
           </button>
