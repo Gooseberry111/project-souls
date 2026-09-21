@@ -66,7 +66,7 @@ const confirmTeam = async () => {
 
 <template>
   <div class="min-h-screen px-4 py-8 text-white sm:px-6 sm:py-12">
-    <main class="mx-auto max-w-3xl">
+    <main id="main" tabindex="-1" class="mx-auto max-w-3xl">
       <!-- Header -->
       <div class="mb-8 text-center">
         <div

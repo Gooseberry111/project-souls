@@ -285,7 +285,7 @@ onMounted(() => {
     </header>
 
     <!-- Main -->
-    <main
+    <main id="main" tabindex="-1"
       class="mx-auto max-w-7xl px-4 py-6 pb-28 sm:px-6 sm:py-8 lg:px-8 lg:pb-8"
     >
       <!-- Welcome -->

@@ -107,7 +107,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <main class="mx-auto max-w-5xl px-4 py-6 pb-28 sm:px-6 sm:py-8 lg:px-8">
+    <main id="main" tabindex="-1" class="mx-auto max-w-5xl px-4 py-6 pb-28 sm:px-6 sm:py-8 lg:px-8">
       <!-- LOADING -->
 
       <div v-if="loading" class="animate-pulse">

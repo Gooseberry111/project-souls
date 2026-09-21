@@ -69,7 +69,7 @@ const filteredPeople = computed(() => {
       </div>
     </header>
 
-    <main class="mx-auto max-w-4xl px-4 py-8 pb-28 sm:px-6">
+    <main id="main" tabindex="-1" class="mx-auto max-w-4xl px-4 py-8 pb-28 sm:px-6">
       <!-- Search -->
       <div v-if="!loading && !error && people.length > 0" class="mb-6">
         <input

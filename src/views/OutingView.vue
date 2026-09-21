@@ -1,8 +1,23 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import AppModal from "../components/AppModal.vue";
 import BottomNav from "../components/BottomNav.vue";
+import {
+  CENTRES,
+  centreAddress,
+  centreLabel,
+  outingTitleFor,
+} from "../lib/centres";
+import {
+  CALL_OUTCOMES,
+  CONTACT_STATUSES,
+  statusBadgeClass,
+} from "../lib/contactStatus";
 import { goBack } from "../lib/navigation";
+import { getCallLink, normalizePhone } from "../lib/phone";
+import { relativeTime } from "../lib/time";
+import { toastError, toastSuccess } from "../lib/toast";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
 
@@ -16,7 +31,7 @@ const loading = ref(true);
 const error = ref("");
 
 const editingId = ref(null);
-const editForm = ref({ name: "", phone: "", notes: "" });
+const editForm = ref({ name: "", phone: "", notes: "", status: "New" });
 const saving = ref(false);
 
 const addingPerson = ref(false);
@@ -30,6 +45,17 @@ const actionError = ref("");
 
 const showFeedbackPrompt = ref(false);
 const feedbackContact = ref(null);
+
+/* Which button opened the prompt. A call asks for its outcome -
+   switched off, no answer, and so on - because that is the whole
+   point of the call. A text does not: "Texted" is recorded on its
+   own and is not an outcome anyone chooses. */
+const feedbackChannel = ref("call");
+
+const promptStatus = ref("Called");
+const promptNotes = ref("");
+const savingPrompt = ref(false);
+const promptError = ref("");
 
 /* =========================================================
    PERMISSIONS
@@ -75,49 +101,17 @@ const formatDate = (date) => {
    PHONE HELPERS
 ========================================================= */
 
-const normalizePhone = (phone) => {
-  if (!phone) return "";
-
-  let value = String(phone).trim();
-
-  // Remove spaces, brackets, dashes, etc.
-  value = value.replace(/[^\d+]/g, "");
-
-  // Nigerian local format:
-  // 08012345678 -> +2348012345678
-  if (value.startsWith("0") && value.length >= 10) {
-    value = "+234" + value.substring(1);
-  }
-
-  return value;
-};
-
-const getCallLink = (phone) => {
-  const normalized = normalizePhone(phone);
-
-  return normalized ? `tel:${normalized}` : "#";
-};
-
 const buildSmsMessage = (contact) => {
-  const branch =
-    contact?.branch || contact?.location || outing.value?.location || "";
-
-  if (
-    branch.toLowerCase().includes("gbag") ||
-    branch.toLowerCase().includes("gbayi")
-  ) {
-    return `Good day beloved
-
-You are warmly invited to worship with us at Transfiguration Church on SUNDAY by 8am
-
-@ John Tanko street off Joel Bala Gbayi villa`;
-  }
+  /* The outing's centre decides the address, so correcting a
+     centre also corrects every invitation sent afterwards. */
+  const centre =
+    outing.value?.location || contact?.centre || contact?.location || "";
 
   return `Good day beloved
 
 You are warmly invited to worship with us at Transfiguration Church on SUNDAY by 8am
 
-@ Chalawa, Opposite millennium suite, Barnawa`;
+@ ${centreAddress(centre)}`;
 };
 
 const getSmsLink = (contact) => {
@@ -134,23 +128,150 @@ const getSmsLink = (contact) => {
    FEEDBACK PROMPT
 ========================================================= */
 
-const askForFeedback = (contact) => {
+/* =========================================================
+   WAITING FOR THE USER TO COME BACK
+
+   Tapping Call hands the screen to the dialer, and a phone
+   backgrounds this tab while that is happening - which throttles
+   its timers. Putting the prompt on a plain setTimeout meant it
+   could fire while nobody was looking, or arrive late. So the
+   prompt waits for the tab to become visible again, and the timer
+   survives only as the desktop path, where the tab never hides.
+========================================================= */
+
+let pendingPrompt = null;
+
+const flushPendingPrompt = () => {
+  if (!pendingPrompt) return;
+
+  const { contact, channel } = pendingPrompt;
+
+  pendingPrompt = null;
+
+  document.removeEventListener("visibilitychange", handleReturn);
+
+  askForFeedback(contact, channel);
+};
+
+function handleReturn() {
+  if (document.visibilityState === "visible") {
+    flushPendingPrompt();
+  }
+}
+
+const promptAfterReturning = (contact, channel) => {
+  pendingPrompt = { contact, channel };
+
+  document.addEventListener("visibilitychange", handleReturn);
+
+  // Desktop: the tab never hid, so nothing will wake it. Only fires
+  // while visible, so a phone still in the dialer is left alone.
+  setTimeout(() => {
+    if (document.visibilityState === "visible") {
+      flushPendingPrompt();
+    }
+  }, 1200);
+};
+
+onUnmounted(() => {
+  pendingPrompt = null;
+
+  document.removeEventListener("visibilitychange", handleReturn);
+});
+
+const askForFeedback = (contact, channel = "call") => {
   if (!contact?.id) return;
 
+  // Nothing to ask someone who cannot save the answer.
+  if (!canModifyContact(contact)) return;
+
   feedbackContact.value = contact;
+  feedbackChannel.value = channel;
+
+  /* A contact still marked New has just been reached, so "Called"
+     is the outcome to beat. Anyone already carrying an outcome
+     keeps it until it is changed. */
+  promptStatus.value =
+    contact.status && contact.status !== "New" ? contact.status : "Called";
+
+  promptNotes.value = contact.notes || "";
+  promptError.value = "";
+
   showFeedbackPrompt.value = true;
 };
 
-const closeFeedbackPrompt = () => {
+const closeFeedbackPrompt = ({ force = false } = {}) => {
+  if (savingPrompt.value && !force) return;
+
   showFeedbackPrompt.value = false;
   feedbackContact.value = null;
+
+  promptNotes.value = "";
+  promptError.value = "";
 };
 
+/* Saves straight from the prompt, so the outcome of a call can be
+   recorded in one tap without opening the full edit form. */
+const savePromptFeedback = async () => {
+  const contact = feedbackContact.value;
+
+  if (!contact) return;
+
+  if (!canModifyContact(contact)) {
+    promptError.value = "You can only update people you recorded.";
+    return;
+  }
+
+  savingPrompt.value = true;
+  promptError.value = "";
+
+  try {
+    const notes = promptNotes.value.trim();
+
+    const changes = { notes: notes || null };
+
+    // A text leaves the outcome alone: it is already recorded in
+    // texted_at, and the person may still be waiting on a call.
+    if (feedbackChannel.value === "call") {
+      changes.status = promptStatus.value;
+    }
+
+    const { data, error: updateError } = await supabase
+      .from("contacts")
+      .update(changes)
+      .eq("id", contact.id)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    const index = contacts.value.findIndex((item) => item.id === contact.id);
+
+    if (index !== -1) {
+      contacts.value[index] = data;
+    }
+
+    closeFeedbackPrompt({ force: true });
+
+    toastSuccess(`Saved for ${contact.name}.`);
+  } catch (err) {
+    console.error("Error saving feedback:", err);
+
+    promptError.value = err.message || "Unable to save this feedback.";
+  } finally {
+    savingPrompt.value = false;
+  }
+};
+
+/* For anything the prompt cannot cover - a wrong name or number. */
 const addFeedbackNow = () => {
   if (!feedbackContact.value) return;
 
-  startEditing(feedbackContact.value);
+  const contact = feedbackContact.value;
+
   closeFeedbackPrompt();
+
+  startEditing(contact);
 };
 
 /* =========================================================
@@ -181,15 +302,14 @@ const handleCall = async (contact) => {
       contact.called_at = calledAt;
     } catch (err) {
       console.error("Error recording call:", err);
+
+      toastError("The call could not be recorded. Check your connection.");
     }
   }
 
   window.location.href = link;
 
-  // Give the browser a moment before showing the feedback prompt.
-  setTimeout(() => {
-    askForFeedback(contact);
-  }, 800);
+  promptAfterReturning(contact, "call");
 };
 
 const handleText = async (contact) => {
@@ -216,15 +336,14 @@ const handleText = async (contact) => {
       contact.texted_at = textedAt;
     } catch (err) {
       console.error("Error recording text:", err);
+
+      toastError("The text could not be recorded. Check your connection.");
     }
   }
 
   window.location.href = link;
 
-  // Give the messaging app time to open.
-  setTimeout(() => {
-    askForFeedback(contact);
-  }, 800);
+  promptAfterReturning(contact, "text");
 };
 
 /* =========================================================
@@ -284,6 +403,81 @@ const loadOuting = async () => {
 };
 
 /* =========================================================
+   CORRECT THE CENTRE
+
+   Picking the wrong centre is an easy mistake to make on the
+   way out of an outing, and it is not a cosmetic one: the
+   centre decides the address in every invitation text sent
+   from this screen. So it stays editable after saving.
+========================================================= */
+
+const editingCentre = ref(false);
+const centreDraft = ref("");
+const savingCentre = ref(false);
+const centreError = ref("");
+
+const startEditingCentre = () => {
+  centreDraft.value = outing.value?.location || "";
+  centreError.value = "";
+  editingCentre.value = true;
+};
+
+const cancelEditingCentre = () => {
+  if (savingCentre.value) return;
+
+  editingCentre.value = false;
+  centreError.value = "";
+};
+
+const saveCentre = async () => {
+  if (!outing.value) return;
+
+  const centre = centreDraft.value;
+
+  if (!centre) {
+    centreError.value = "Please choose a centre.";
+    return;
+  }
+
+  if (centre === outing.value.location) {
+    cancelEditingCentre();
+    return;
+  }
+
+  savingCentre.value = true;
+  centreError.value = "";
+
+  try {
+    /* The title is generated from the centre rather than typed,
+       so it is rewritten here too - otherwise an outing would
+       read "Barnawa Centre" while sitting under Gbagyivilla. */
+    const { data, error: updateError } = await supabase
+      .from("evangelism_outings")
+      .update({
+        location: centre,
+        title: outingTitleFor(centre),
+      })
+      .eq("id", outing.value.id)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    outing.value = data;
+
+    editingCentre.value = false;
+
+    toastSuccess(`Centre changed to ${centreLabel(centre)}.`);
+  } catch (err) {
+    console.error("Error updating centre:", err);
+
+    centreError.value = err.message || "Unable to change the centre.";
+  } finally {
+    savingCentre.value = false;
+  }
+};
+
+/* =========================================================
    EDIT A SAVED CONTACT
 
    An outing stays editable after it is saved: its owner (or a
@@ -298,6 +492,7 @@ const startEditing = (contact) => {
     name: contact.name || "",
     phone: contact.phone || "",
     notes: contact.notes || "",
+    status: contact.status || "New",
   };
 
   addingPerson.value = false;
@@ -307,7 +502,7 @@ const startEditing = (contact) => {
 const cancelEditing = () => {
   editingId.value = null;
 
-  editForm.value = { name: "", phone: "", notes: "" };
+  editForm.value = { name: "", phone: "", notes: "", status: "New" };
   actionError.value = "";
 };
 
@@ -325,12 +520,12 @@ const saveContact = async (contact) => {
   actionError.value = "";
 
   try {
-    // Recording feedback moves a brand new contact to "Called", but an
-    // existing status (Following Up, Not Reachable) is left alone.
-    const status =
-      notes && (!contact.status || contact.status === "New")
-        ? "Called"
-        : contact.status || "New";
+    // Whatever outcome was picked wins. It only falls back to the
+    // old rule - feedback against a brand new contact means they
+    // were reached - when the tag was left on "New".
+    const chosen = editForm.value.status || contact.status || "New";
+
+    const status = notes && chosen === "New" ? "Called" : chosen;
 
     const { data, error: updateError } = await supabase
       .from("contacts")
@@ -353,6 +548,8 @@ const saveContact = async (contact) => {
     }
 
     cancelEditing();
+
+    toastSuccess(`${name} updated.`);
   } catch (err) {
     console.error("Error updating contact:", err);
 
@@ -423,6 +620,8 @@ const saveNewPerson = async () => {
     contacts.value.push(contact);
 
     cancelAddingPerson();
+
+    toastSuccess(`${name} added to this outing.`);
   } catch (err) {
     console.error("Error adding person:", err);
 
@@ -498,6 +697,8 @@ const deleteContact = async () => {
     }
 
     deleteTarget.value = null;
+
+    toastSuccess(`${contact.name} removed.`);
   } catch (err) {
     console.error("Error deleting contact:", err);
 
@@ -533,9 +734,74 @@ onMounted(() => {
         </button>
 
         <div v-if="outing">
-          <p class="eyebrow">
-            {{ outing.location }} Branch
-          </p>
+          <!-- CENTRE -->
+
+          <div v-if="!editingCentre" class="flex flex-wrap items-center gap-2">
+            <p class="eyebrow">
+              {{ centreLabel(outing.location) }} Centre
+            </p>
+
+            <button
+              v-if="canEdit"
+              type="button"
+              @click="startEditingCentre"
+              class="text-[11px] font-semibold text-gray-600 transition hover:text-[#D4AF37]"
+            >
+              Change
+            </button>
+          </div>
+
+          <!-- CENTRE - EDITING -->
+
+          <div v-else class="max-w-sm">
+            <label class="field-label">Centre</label>
+
+            <select
+              v-model="centreDraft"
+              :disabled="savingCentre"
+              class="field-select"
+            >
+              <option
+                v-for="centre in CENTRES"
+                :key="centre.value"
+                :value="centre.value"
+              >
+                {{ centre.label }}
+              </option>
+            </select>
+
+            <p class="mt-2 text-[11px] leading-5 text-gray-600">
+              This sets the address in the invitation text for
+              everyone in this outing.
+            </p>
+
+            <p
+              v-if="centreError"
+              class="mt-2 rounded-xl border border-red-500/25 bg-red-500/[0.07] px-3 py-2 text-xs text-red-400 backdrop-blur"
+            >
+              {{ centreError }}
+            </p>
+
+            <div class="mt-3 flex gap-2">
+              <button
+                type="button"
+                @click="cancelEditingCentre"
+                :disabled="savingCentre"
+                class="btn-ghost btn-sm"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                @click="saveCentre"
+                :disabled="savingCentre"
+                class="btn-gold btn-sm"
+              >
+                {{ savingCentre ? "Saving..." : "Save centre" }}
+              </button>
+            </div>
+          </div>
 
           <h1 class="page-title mt-2">
             {{ outing.title }}
@@ -552,7 +818,7 @@ onMounted(() => {
          MAIN
     ====================================================== -->
 
-    <main class="mx-auto max-w-4xl px-4 py-6 pb-28 sm:px-6 sm:py-8">
+    <main id="main" tabindex="-1" class="mx-auto max-w-4xl px-4 py-6 pb-28 sm:px-6 sm:py-8">
       <!-- Loading -->
 
       <div
@@ -566,9 +832,17 @@ onMounted(() => {
 
       <div
         v-else-if="error"
-        class="rounded-2xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur p-5 text-sm text-red-400"
+        class="rounded-2xl border border-red-500/25 bg-red-500/[0.07] backdrop-blur p-5"
       >
-        {{ error }}
+        <p class="text-sm text-red-400">{{ error }}</p>
+
+        <button
+          type="button"
+          @click="loadOuting"
+          class="btn-ghost btn-sm mt-3"
+        >
+          Try again
+        </button>
       </div>
 
       <template v-else>
@@ -641,10 +915,8 @@ onMounted(() => {
 
                     <span
                       :class="[
-                        'rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide',
-                        contact.status === 'Called'
-                          ? 'bg-[#D4AF37]/10 text-[#D4AF37]'
-                          : 'bg-white/5 text-gray-500',
+                        statusBadgeClass(contact.status || 'New'),
+                        'px-2.5 py-1 text-[10px] uppercase tracking-wide',
                       ]"
                     >
                       {{ contact.status || "New" }}
@@ -654,7 +926,7 @@ onMounted(() => {
                          it: a person can be called and texted. -->
                     <span
                       v-if="contact.texted_at"
-                      class="rounded-full bg-blue-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-400"
+                      class="badge-blue px-2.5 py-1 text-[10px] uppercase tracking-wide"
                     >
                       Texted
                     </span>
@@ -665,13 +937,41 @@ onMounted(() => {
                   <p class="muted mt-1">
                     {{ contact.phone || "No phone number" }}
                   </p>
+
+                  <!-- How long this has been sitting. The date on
+                       its own makes people work that out. -->
+                  <p
+                    v-if="contact.called_at || contact.texted_at"
+                    class="mt-1 text-[11px] text-gray-600"
+                  >
+                    <span v-if="contact.called_at">
+                      Called {{ relativeTime(contact.called_at) }}
+                    </span>
+
+                    <span v-if="contact.called_at && contact.texted_at">
+                      ·
+                    </span>
+
+                    <span v-if="contact.texted_at">
+                      Texted {{ relativeTime(contact.texted_at) }}
+                    </span>
+                  </p>
+
+                  <p v-else class="mt-1 text-[11px] text-gray-600">
+                    Not contacted yet
+                  </p>
                 </div>
 
                 <!-- Edit / Delete -->
 
                 <div class="flex shrink-0 items-center gap-3">
+                  <!-- Gated on owning the contact, not the outing:
+                       row level security allows only the person who
+                       recorded someone (or a pastor) to change them,
+                       so an outing owner offered Edit on a team
+                       mate's contact would hit a database error. -->
                   <button
-                    v-if="canEdit"
+                    v-if="canModifyContact(contact)"
                     type="button"
                     @click="startEditing(contact)"
                     class="text-xs font-semibold text-[#D4AF37] hover:text-[#E2C45A]"
@@ -777,6 +1077,38 @@ onMounted(() => {
                     placeholder="08012345678"
                     class="field mt-1 py-3 text-sm"
                   />
+                </div>
+
+                <div>
+                  <label class="text-xs text-gray-500">
+                    Call outcome
+                  </label>
+
+                  <select
+                    v-model="editForm.status"
+                    class="field-select mt-1 py-3 text-sm"
+                  >
+                    <option
+                      v-for="status in CONTACT_STATUSES"
+                      :key="status"
+                      :value="status"
+                    >
+                      {{ status }}
+                    </option>
+                  </select>
+
+                  <!-- Texted is shown but never offered as a choice:
+                       the app records it when a text is sent, so
+                       editing it by hand would make it a claim
+                       rather than a fact. -->
+                  <p
+                    v-if="contact.texted_at"
+                    class="mt-2 flex items-center gap-2 text-[11px] text-gray-600"
+                  >
+                    <span class="badge-blue px-2 py-0.5">Texted</span>
+
+                    <span>Recorded automatically - cannot be edited</span>
+                  </p>
                 </div>
 
                 <div>
@@ -921,87 +1253,171 @@ onMounted(() => {
          FEEDBACK PROMPT
     ====================================================== -->
 
-    <div
-      v-if="showFeedbackPrompt"
-      class="modal-backdrop"
-      @click.self="closeFeedbackPrompt"
+    <AppModal
+      :open="showFeedbackPrompt"
+      :busy="savingPrompt"
+      labelled-by="feedback-prompt-title"
+      @close="closeFeedbackPrompt()"
     >
-      <div
-        class="w-full max-w-md glass-panel p-6"
-      >
+      <div>
         <!-- Header -->
 
         <div class="flex items-start justify-between gap-4">
           <div>
-            <p class="eyebrow">
-              Outreach follow-up
-            </p>
+            <p class="eyebrow">Outreach follow-up</p>
 
-            <h3 class="mt-1 text-xl font-black">Add feedback now?</h3>
+            <h3 id="feedback-prompt-title" class="mt-1 text-xl font-black">
+              {{
+                feedbackChannel === "call"
+                  ? "How did the call go?"
+                  : "Add feedback now?"
+              }}
+            </h3>
 
             <p class="mt-2 text-sm leading-6 text-gray-500">
-              Did you get any feedback from
               <span class="font-semibold text-gray-300">
                 {{ feedbackContact?.name }}
               </span>
-              ?
+
+              <template v-if="feedbackChannel === 'call'">
+                - pick what happened, and add anything worth
+                remembering.
+              </template>
+
+              <template v-else>
+                has been texted. Did you get any feedback?
+              </template>
             </p>
           </div>
 
           <button
             type="button"
-            @click="closeFeedbackPrompt"
-            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-500 transition hover:bg-white/5 hover:text-white"
+            @click="closeFeedbackPrompt()"
+            :disabled="savingPrompt"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-500 transition hover:bg-white/5 hover:text-white disabled:opacity-30"
           >
             ×
           </button>
         </div>
 
+        <!-- =================================================
+             CALL OUTCOME
+
+             Chips rather than a dropdown: this is the one
+             screen that is used standing outside with a phone
+             in one hand, so the answer should be one tap.
+        ================================================== -->
+
+        <div v-if="feedbackChannel === 'call'" class="mt-5">
+          <p class="field-label">Outcome</p>
+
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="outcome in CALL_OUTCOMES"
+              :key="outcome"
+              type="button"
+              @click="promptStatus = outcome"
+              :disabled="savingPrompt"
+              :class="[
+                'rounded-xl border px-3 py-2 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-40',
+                promptStatus === outcome
+                  ? 'border-[#D4AF37] bg-[#D4AF37]/15 text-[#D4AF37]'
+                  : 'border-white/10 bg-white/[0.03] text-gray-400 hover:bg-white/[0.06] hover:text-white',
+              ]"
+            >
+              {{ outcome }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Texted is a record of what the app did, so it is
+             shown here but never up for editing. -->
+        <p
+          v-if="feedbackContact?.texted_at"
+          class="mt-4 flex items-center gap-2 text-[11px] text-gray-600"
+        >
+          <span class="badge-blue px-2 py-0.5">Texted</span>
+
+          <span>Recorded automatically - cannot be edited</span>
+        </p>
+
+        <!-- FEEDBACK -->
+
+        <div class="mt-5">
+          <label class="field-label">Feedback</label>
+
+          <textarea
+            v-model="promptNotes"
+            rows="3"
+            :disabled="savingPrompt"
+            placeholder="What did they say?"
+            class="field resize-none py-3 text-sm"
+          ></textarea>
+        </div>
+
+        <p
+          v-if="promptError"
+          class="mt-3 rounded-xl border border-red-500/25 bg-red-500/[0.07] px-3 py-2 text-xs text-red-400 backdrop-blur"
+        >
+          {{ promptError }}
+        </p>
+
         <!-- Buttons -->
 
-        <div class="mt-6 grid gap-3 sm:grid-cols-2">
-          <!-- Add Feedback -->
-
+        <div class="mt-6 flex gap-2">
           <button
             type="button"
-            @click="addFeedbackNow"
-            class="rounded-xl bg-[#D4AF37] px-4 py-3 text-sm font-black text-black transition hover:bg-[#E2C45A]"
-          >
-            Add feedback
-          </button>
-
-          <!-- Not Now -->
-
-          <button
-            type="button"
-            @click="closeFeedbackPrompt"
-            class="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-gray-400 transition hover:bg-white/[0.06] hover:text-white"
+            @click="closeFeedbackPrompt()"
+            :disabled="savingPrompt"
+            class="btn-ghost flex-1"
           >
             Not now
           </button>
+
+          <button
+            type="button"
+            @click="savePromptFeedback"
+            :disabled="savingPrompt"
+            class="btn-gold flex-1"
+          >
+            {{ savingPrompt ? "Saving..." : "Save" }}
+          </button>
         </div>
+
+        <!-- The full form, for the things this prompt does not
+             cover - a name spelt wrong, a number mistyped. -->
+        <button
+          type="button"
+          @click="addFeedbackNow"
+          :disabled="savingPrompt"
+          class="mt-3 w-full text-center text-xs font-semibold text-gray-500 transition hover:text-[#D4AF37] disabled:opacity-40"
+        >
+          Edit this person's details instead
+        </button>
       </div>
-    </div>
+    </AppModal>
 
     <!-- =====================================================
          DELETE CONFIRMATION
     ====================================================== -->
 
-    <div
-      v-if="deleteTarget"
-      class="modal-backdrop z-[110]"
-      @click.self="cancelDeleteContact"
+    <AppModal
+      :open="Boolean(deleteTarget)"
+      :busy="deleting"
+      labelled-by="delete-contact-title"
+      size="sm"
+      @close="cancelDeleteContact"
     >
-      <div
-        class="w-full max-w-sm glass-panel p-6"
-      >
+      <div v-if="deleteTarget">
         <div
           class="flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10 text-xl text-red-400"
         >
           ⚠
         </div>
 
-        <h3 class="mt-4 text-lg font-bold">Delete this person?</h3>
+        <h3 id="delete-contact-title" class="mt-4 text-lg font-bold">
+          Delete this person?
+        </h3>
 
         <p class="mt-2 text-sm leading-6 text-gray-500">
           <span class="font-semibold text-gray-300">
@@ -1039,7 +1455,7 @@ onMounted(() => {
           </button>
         </div>
       </div>
-    </div>
+    </AppModal>
 
     <!-- =====================================================
          MOBILE NAVIGATION

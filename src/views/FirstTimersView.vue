@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BottomNav from "../components/BottomNav.vue";
+import { CENTRES, centreLabel } from "../lib/centres";
+import { toastError, toastSuccess } from "../lib/toast";
 import { goBack } from "../lib/navigation";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
@@ -106,7 +108,7 @@ const saveFirstTimers = async () => {
   error.value = "";
 
   if (!form.value.branch) {
-    error.value = "Please select a center.";
+    error.value = "Please select a centre.";
     return;
   }
 
@@ -140,10 +142,18 @@ const saveFirstTimers = async () => {
     resetForm();
     showForm.value = false;
 
+    toastSuccess(
+      `${validPeople.length} first ${
+        validPeople.length === 1 ? "timer" : "timers"
+      } recorded.`,
+    );
+
     await loadFirstTimers();
   } catch (err) {
     console.error("Save first timers error:", err);
     error.value = err.message || "Unable to save first timers.";
+
+    toastError(error.value);
   } finally {
     saving.value = false;
   }
@@ -163,7 +173,7 @@ const folders = computed(() => {
 
     const dateKey = date.toISOString().split("T")[0];
 
-    const branch = person.branch || "Unknown Branch";
+    const branch = person.branch || "Unknown";
 
     const key = `${branch}-${dateKey}`;
 
@@ -291,10 +301,10 @@ const exportFirstTimersPdf = () => {
     doc.setFont("helvetica", "bold");
     doc.text("FIRST TIMERS REPORT", 14, 47);
 
-    // Branch and date
+    // Centre and date
     doc.setFontSize(11);
     doc.setFont("helvetica", "bold");
-    doc.text(`${selectedFolder.value.branch} Branch`, 14, 55);
+    doc.text(`${centreLabel(selectedFolder.value.branch)} Centre`, 14, 55);
 
     doc.setFontSize(9);
     doc.setFont("helvetica", "normal");
@@ -434,7 +444,7 @@ onMounted(() => {
     </header>
 
     <!-- Main -->
-    <main class="mx-auto max-w-5xl px-4 py-6 pb-28 sm:px-6 sm:py-8">
+    <main id="main" tabindex="-1" class="mx-auto max-w-5xl px-4 py-6 pb-28 sm:px-6 sm:py-8">
       <!-- Add Form -->
       <section
         v-if="showForm && canAdd"
@@ -444,23 +454,27 @@ onMounted(() => {
 
         <h2 class="section-title mt-2">Record today's visitors</h2>
 
-        <!-- Branch -->
+        <!-- Centre -->
         <div class="mt-6">
           <label
             class="mb-2 block text-xs font-semibold uppercase tracking-wide text-gray-500"
           >
-            Center
+            Centre
           </label>
 
           <select
             v-model="form.branch"
             class="field-select"
           >
-            <option value="">Select center</option>
+            <option value="">Select centre</option>
 
-            <option value="Barnawa">Barnawa</option>
-
-            <option value="Gbaggivilla">Gbagyivilla</option>
+            <option
+              v-for="centre in CENTRES"
+              :key="centre.value"
+              :value="centre.value"
+            >
+              {{ centre.label }}
+            </option>
           </select>
         </div>
 
@@ -589,7 +603,7 @@ onMounted(() => {
 
         <div class="mb-6">
           <p class="eyebrow">
-            {{ selectedFolder.branch }} Branch
+            {{ centreLabel(selectedFolder.branch) }} Centre
           </p>
 
           <div class="mt-1 flex items-start justify-between gap-4">
@@ -730,7 +744,7 @@ onMounted(() => {
 
             <!-- Details -->
             <div class="min-w-0 flex-1">
-              <p class="font-semibold">{{ folder.branch }} Branch</p>
+              <p class="font-semibold">{{ centreLabel(folder.branch) }} Centre</p>
 
               <p class="muted mt-1">
                 {{ formatDate(folder.date) }}

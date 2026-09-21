@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BottomNav from "../components/BottomNav.vue";
+import { CENTRES } from "../lib/centres";
+import { CONTACT_STATUSES, RETRY_STATUSES } from "../lib/contactStatus";
 import { goBack } from "../lib/navigation";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
@@ -21,12 +23,13 @@ const totalOutings = ref(0);
 const firstTimers = ref(0);
 
 const teamStats = ref([]);
-const branchStats = ref([]);
+const centreStats = ref([]);
 const recentFirstTimers = ref([]);
 
 // --- New: additional detail ---
 const statusBreakdown = ref([]);
 const staleNewCount = ref(0);
+const retryCount = ref(0);
 const weeklyContacts = ref(0);
 const weeklyOutings = ref(0);
 const topContributors = ref([]);
@@ -64,9 +67,9 @@ const TEAMS = [
   "Kingdom Harvesters",
 ];
 
-const BRANCHES = ["Barnawa", "Gbaggivilla"];
-
-const STATUSES = ["New", "Called", "Following Up", "Not Reachable"];
+/* Every outcome a contact can carry, so the breakdown adds up to
+   the total. Kept in one place - see lib/contactStatus.js. */
+const STATUSES = CONTACT_STATUSES;
 
 const scopedToWeek = (query) => {
   const { start, end } = getWeekRange();
@@ -151,23 +154,26 @@ const setTeamScope = async (scope) => {
 };
 
 /* =========================================================
-   BRANCH STATS
+   CENTRE STATS
+
+   Queried by the stored value, shown by the label - the two
+   differ for Gbagyivilla. See lib/centres.js.
 ========================================================= */
 
-const loadBranchStats = async () => {
+const loadCentreStats = async () => {
   const results = await Promise.all(
-    BRANCHES.map(async (branch) => {
-      const { data: outings, error: branchError } = await supabase
+    CENTRES.map(async (centre) => {
+      const { data: outings, error: centreError } = await supabase
         .from("evangelism_outings")
         .select("id")
-        .eq("location", branch);
+        .eq("location", centre.value);
 
-      if (branchError) throw branchError;
+      if (centreError) throw centreError;
 
       const outingIds = (outings || []).map((outing) => outing.id);
 
       if (!outingIds.length) {
-        return { branch, contacts: 0 };
+        return { centre: centre.label, contacts: 0 };
       }
 
       const { data: relationships, error: relationError } = await supabase
@@ -181,11 +187,11 @@ const loadBranchStats = async () => {
         (relationships || []).map((item) => item.contact_id),
       );
 
-      return { branch, contacts: uniqueContactIds.size };
+      return { centre: centre.label, contacts: uniqueContactIds.size };
     }),
   );
 
-  branchStats.value = results;
+  centreStats.value = results;
 };
 
 /* =========================================================
@@ -268,7 +274,20 @@ const loadTotals = async () => {
       .from("contacts")
       .select("*", { count: "exact", head: true })
       .eq("status", "New")
+      /* Never actually dialled. Without this the badge counts
+         people a member called and then skipped the outcome
+         prompt for - who do not appear on that member's own
+         "needs your attention" list, so the two disagreed. */
+      .is("called_at", null)
       .lt("created_at", staleCutoff.toISOString()),
+
+    /* Rang out or switched off. These are not finished with, but
+       they no longer count as "New", so without their own tally
+       they would quietly drop out of the follow-up picture. */
+    supabase
+      .from("contacts")
+      .select("*", { count: "exact", head: true })
+      .in("status", RETRY_STATUSES),
 
     supabase
       .from("contacts")
@@ -293,6 +312,7 @@ const loadTotals = async () => {
     firstTimersResult,
     recentResult,
     staleResult,
+    retryResult,
     weeklyContactsResult,
     weeklyOutingsResult,
   ] = results;
@@ -302,6 +322,7 @@ const loadTotals = async () => {
   firstTimers.value = firstTimersResult.count || 0;
   recentFirstTimers.value = recentResult.data || [];
   staleNewCount.value = staleResult.count || 0;
+  retryCount.value = retryResult.count || 0;
   weeklyContacts.value = weeklyContactsResult.count || 0;
   weeklyOutings.value = weeklyOutingsResult.count || 0;
 };
@@ -321,7 +342,7 @@ const loadSummary = async () => {
     await Promise.all([
       loadTotals(),
       loadTeamStats(),
-      loadBranchStats(),
+      loadCentreStats(),
       loadStatusBreakdown(),
       loadContributors(),
     ]);
@@ -435,6 +456,7 @@ const exportPdf = () => {
         ["Weekly Outings", weeklyOutings.value],
         ["Contacts Texted", textedContacts.value],
         ["Stale Contacts", staleNewCount.value],
+        ["Needs Another Call", retryCount.value],
       ],
       ...tableStyles,
     });
@@ -466,11 +488,11 @@ const exportPdf = () => {
       ...tableStyles,
     });
 
-    // Branch performance
+    // Centre performance
     autoTable(doc, {
       startY: doc.lastAutoTable.finalY + 12,
-      head: [["Branch", "Contacts"]],
-      body: branchStats.value.map((branch) => [branch.branch, branch.contacts]),
+      head: [["Centre", "Contacts"]],
+      body: centreStats.value.map((centre) => [centre.centre, centre.contacts]),
       ...tableStyles,
     });
 
@@ -582,7 +604,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <main class="mx-auto max-w-7xl px-4 py-6 pb-28 sm:px-6 sm:py-8 lg:px-8">
+    <main id="main" tabindex="-1" class="mx-auto max-w-7xl px-4 py-6 pb-28 sm:px-6 sm:py-8 lg:px-8">
       <!-- Loading -->
       <!-- Loading Skeletons -->
       <div v-if="loading" class="animate-pulse">
@@ -628,7 +650,7 @@ onMounted(() => {
           </div>
         </section>
 
-        <!-- Branches -->
+        <!-- Centres -->
         <section class="mt-8">
           <div class="mb-4">
             <div class="h-4 w-36 rounded bg-white/10"></div>
@@ -638,7 +660,7 @@ onMounted(() => {
           <div class="grid grid-cols-2 gap-3">
             <div
               v-for="i in 2"
-              :key="`branch-skeleton-${i}`"
+              :key="`centre-skeleton-${i}`"
               class="glass-card p-5"
             >
               <div class="h-3 w-20 rounded bg-white/10"></div>
@@ -887,28 +909,28 @@ onMounted(() => {
           </div>
         </section>
 
-        <!-- Branches -->
+        <!-- Centres -->
         <section class="mt-8">
           <div class="mb-4">
             <p class="eyebrow">
-              Branch performance
+              Centre performance
             </p>
 
-            <h2 class="section-title mt-2">Outreach by Branch</h2>
+            <h2 class="section-title mt-2">Outreach by Centre</h2>
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div
-              v-for="branch in branchStats"
-              :key="branch.branch"
+              v-for="centre in centreStats"
+              :key="centre.centre"
               class="glass-card p-5"
             >
               <p class="text-sm text-gray-500">
-                {{ branch.branch }}
+                {{ centre.centre }}
               </p>
 
               <p class="mt-2 text-2xl font-black text-[#D4AF37]">
-                {{ branch.contacts }}
+                {{ centre.contacts }}
               </p>
 
               <p class="text-xs text-gray-600">contacts</p>
@@ -1012,11 +1034,20 @@ onMounted(() => {
               <h2 class="section-title mt-2">Contact Status Breakdown</h2>
             </div>
 
-            <div
-              v-if="staleNewCount > 0"
-              class="rounded-full border border-red-500/25 bg-red-500/[0.07] backdrop-blur px-3 py-1 text-xs font-semibold text-red-400"
-            >
-              {{ staleNewCount }} uncalled 3+ days
+            <div class="flex flex-wrap items-center gap-2">
+              <div
+                v-if="staleNewCount > 0"
+                class="rounded-full border border-red-500/25 bg-red-500/[0.07] backdrop-blur px-3 py-1 text-xs font-semibold text-red-400"
+              >
+                {{ staleNewCount }} uncalled 3+ days
+              </div>
+
+              <div
+                v-if="retryCount > 0"
+                class="rounded-full border border-[#D4AF37]/30 bg-[#D4AF37]/[0.08] backdrop-blur px-3 py-1 text-xs font-semibold text-[#D4AF37]"
+              >
+                {{ retryCount }} owed another call
+              </div>
             </div>
           </div>
 

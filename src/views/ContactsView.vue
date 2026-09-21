@@ -1,8 +1,19 @@
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import AppModal from "../components/AppModal.vue";
 import BottomNav from "../components/BottomNav.vue";
+import ContactRow from "../components/ContactRow.vue";
+import { CENTRES, centreLabel } from "../lib/centres";
+import {
+  CONTACT_STATUSES,
+  needsAnotherCall,
+  statusBadgeClass,
+} from "../lib/contactStatus";
 import { goBack } from "../lib/navigation";
+import { getCallLink } from "../lib/phone";
+import { daysSince, relativeTime } from "../lib/time";
+import { toastError, toastSuccess } from "../lib/toast";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
 
@@ -31,9 +42,14 @@ const everyoneContacts = ref([]);
 const loadingContacts = ref(false);
 
 const searchQuery = ref("");
-const branchFilter = ref("All");
+const centreFilter = ref("All");
 const statusFilter = ref("All");
 const teamFilter = ref("All");
+
+/* Texted is not a status - a person can be called and texted -
+   so it gets its own filter rather than sitting in the status
+   dropdown pretending to be mutually exclusive with the rest. */
+const textedFilter = ref("All");
 
 const sortBy = ref("date");
 const sortDirection = ref("desc");
@@ -122,11 +138,15 @@ const saveFeedback = async () => {
       status: data.status || "New",
     };
 
+    const savedName = selectedFeedback.value?.name;
+
     showFeedbackModal.value = false;
     selectedFeedback.value = null;
     feedbackText.value = "";
     feedbackStatus.value = "New";
     feedbackError.value = "";
+
+    toastSuccess(savedName ? `Saved for ${savedName}.` : "Feedback saved.");
   } catch (err) {
     console.error("Error saving feedback:", err);
 
@@ -383,7 +403,7 @@ const loadEveryoneContacts = async () => {
       return {
         ...contact,
 
-        branch: outing?.location || contact.location || "Unknown",
+        centre: centreLabel(outing?.location || contact.location),
 
         outingDate: outing?.outing_date || contact.created_at,
 
@@ -414,18 +434,165 @@ const filteredOutings = computed(() => {
 });
 
 /* =========================================================
+   MY CONTACTS
+
+   Everything this member recorded, whichever outing it came
+   from. Without this the only way to reach one person was to
+   remember which outing they were on.
+========================================================= */
+
+const myContacts = computed(() => {
+  return everyoneContacts.value.filter(
+    (contact) => contact.added_by === authStore.user?.id,
+  );
+});
+
+const mineSearch = ref("");
+
+const mineResults = computed(() => {
+  const search = mineSearch.value.trim().toLowerCase();
+
+  if (!search) return [];
+
+  return myContacts.value.filter(
+    (contact) =>
+      contact.name?.toLowerCase().includes(search) ||
+      contact.phone?.toLowerCase().includes(search),
+  );
+});
+
+/* =========================================================
+   NEEDS YOUR ATTENTION
+
+   Two ways a contact goes quiet, and neither was visible to
+   the member who recorded them:
+
+     - never called, and recorded days ago
+     - called, but the phone rang out or was switched off
+
+   The pastor had the first of these on his dashboard; the
+   person who could actually do something about it did not.
+========================================================= */
+
+/* Kept in step with the pastor's "uncalled 3+ days" badge in
+   PastorView - same three days, same "never actually dialled"
+   rule - so the two screens never contradict each other. */
+const STALE_AFTER_DAYS = 3;
+
+const attentionReason = (contact) => {
+  if (needsAnotherCall(contact)) {
+    return contact.status;
+  }
+
+  const age = daysSince(contact.created_at);
+
+  if (
+    (!contact.status || contact.status === "New") &&
+    !contact.called_at &&
+    age !== null &&
+    age >= STALE_AFTER_DAYS
+  ) {
+    return `Never called · ${age} days`;
+  }
+
+  return null;
+};
+
+const needsAttention = computed(() => {
+  return myContacts.value
+    .map((contact) => ({ contact, reason: attentionReason(contact) }))
+    .filter((item) => item.reason)
+    /* Oldest first: the ones most likely to be forgotten. */
+    .sort(
+      (a, b) =>
+        new Date(a.contact.created_at) - new Date(b.contact.created_at),
+    );
+});
+
+const showAttention = ref(true);
+
+/* Same shape as the outing screen: dial, record that the call
+   happened, then ask for the outcome once the user is back. */
+let pendingCallback = null;
+
+const flushPendingCallback = () => {
+  if (!pendingCallback) return;
+
+  const contact = pendingCallback;
+
+  pendingCallback = null;
+
+  document.removeEventListener("visibilitychange", handleCallbackReturn);
+
+  openFeedback(contact);
+};
+
+function handleCallbackReturn() {
+  if (document.visibilityState === "visible") {
+    flushPendingCallback();
+  }
+}
+
+const callBack = async (contact) => {
+  const link = getCallLink(contact?.phone);
+
+  if (link === "#") return;
+
+  if (canEditContact(contact)) {
+    const calledAt = new Date().toISOString();
+
+    try {
+      const { error: updateError } = await supabase
+        .from("contacts")
+        .update({ called_at: calledAt })
+        .eq("id", contact.id);
+
+      if (updateError) throw updateError;
+
+      contact.called_at = calledAt;
+    } catch (err) {
+      console.error("Error recording call:", err);
+
+      toastError("The call could not be recorded. Check your connection.");
+    }
+  }
+
+  pendingCallback = contact;
+
+  document.addEventListener("visibilitychange", handleCallbackReturn);
+
+  window.location.href = link;
+
+  // Desktop never hides the tab, so nothing else would wake this.
+  setTimeout(() => {
+    if (document.visibilityState === "visible") {
+      flushPendingCallback();
+    }
+  }, 1200);
+};
+
+onUnmounted(() => {
+  pendingCallback = null;
+
+  document.removeEventListener("visibilitychange", handleCallbackReturn);
+});
+
+/* =========================================================
    EVERYONE FILTER
 ========================================================= */
 
-/* "Texted" is not one of the statuses - it lives in its own
-   column so it can be true alongside any status - but it
-   filters from the same dropdown. */
 const matchesStatusFilter = (contact) => {
   if (statusFilter.value === "All") return true;
 
-  if (statusFilter.value === "Texted") return Boolean(contact.texted_at);
+  return (contact.status || "New") === statusFilter.value;
+};
 
-  return contact.status === statusFilter.value;
+const matchesTextedFilter = (contact) => {
+  if (textedFilter.value === "All") return true;
+
+  if (textedFilter.value === "Texted") return Boolean(contact.texted_at);
+
+  return !contact.texted_at;
 };
 
 const filteredEveryoneContacts = computed(() => {
@@ -442,11 +609,12 @@ const filteredEveryoneContacts = computed(() => {
     });
   }
 
-  if (branchFilter.value !== "All") {
-    result = result.filter((contact) => contact.branch === branchFilter.value);
+  if (centreFilter.value !== "All") {
+    result = result.filter((contact) => contact.centre === centreFilter.value);
   }
 
   result = result.filter(matchesStatusFilter);
+  result = result.filter(matchesTextedFilter);
 
   if (teamFilter.value !== "All") {
     result = result.filter((contact) => contact.team === teamFilter.value);
@@ -519,11 +687,11 @@ const activeFilters = computed(() => {
     });
   }
 
-  if (branchFilter.value !== "All") {
+  if (centreFilter.value !== "All") {
     chips.push({
-      key: "branch",
-      label: branchFilter.value,
-      clear: () => (branchFilter.value = "All"),
+      key: "centre",
+      label: centreFilter.value,
+      clear: () => (centreFilter.value = "All"),
     });
   }
 
@@ -543,26 +711,29 @@ const activeFilters = computed(() => {
     });
   }
 
+  if (textedFilter.value !== "All") {
+    chips.push({
+      key: "texted",
+      label: textedFilter.value,
+      clear: () => (textedFilter.value = "All"),
+    });
+  }
+
   return chips;
 });
 
 const clearFilters = () => {
   searchQuery.value = "";
-  branchFilter.value = "All";
+  centreFilter.value = "All";
   statusFilter.value = "All";
   teamFilter.value = "All";
+  textedFilter.value = "All";
 };
 
 /* Initial of the contact's name, for the row avatar. */
 const initialOf = (name) => (name || "?").trim().charAt(0).toUpperCase() || "?";
 
-const statusClass = (status) => {
-  if (status === "Called") return "badge-green";
-  if (status === "Following Up") return "badge-gold";
-  if (status === "Not Reachable") return "badge-red";
-
-  return "badge-neutral";
-};
+const statusClass = statusBadgeClass;
 
 const changeSort = (column) => {
   if (sortBy.value === column) {
@@ -587,9 +758,12 @@ const openOuting = (outing) => {
    RESET PAGINATION
 ========================================================= */
 
-watch([searchQuery, branchFilter, statusFilter, teamFilter], () => {
-  currentPage.value = 1;
-});
+watch(
+  [searchQuery, centreFilter, statusFilter, teamFilter, textedFilter],
+  () => {
+    currentPage.value = 1;
+  },
+);
 
 /* =========================================================
    CSV
@@ -609,7 +783,7 @@ const convertContactsToCsv = (contacts) => {
   const headers = [
     "Name",
     "Phone Number",
-    "Branch",
+    "Centre",
     "Date Added",
     "Added By",
     "Status",
@@ -622,7 +796,7 @@ const convertContactsToCsv = (contacts) => {
     return [
       contact.name || "",
       contact.phone || "",
-      contact.branch || "",
+      contact.centre || "",
       formatDate(contact.outingDate || contact.created_at),
       contact.addedBy || "",
       contact.status || "New",
@@ -705,13 +879,14 @@ const exportContacts = async (scope, filtered) => {
         });
       }
 
-      if (branchFilter.value !== "All") {
+      if (centreFilter.value !== "All") {
         contacts = contacts.filter(
-          (contact) => contact.branch === branchFilter.value,
+          (contact) => contact.centre === centreFilter.value,
         );
       }
 
       contacts = contacts.filter(matchesStatusFilter);
+      contacts = contacts.filter(matchesTextedFilter);
 
       if (scope !== "team" && teamFilter.value !== "All") {
         contacts = contacts.filter(
@@ -747,7 +922,9 @@ const exportContacts = async (scope, filtered) => {
    MOUNT
 ========================================================= */
 
-onMounted(async () => {
+const reload = async () => {
+  error.value = "";
+
   // Outings only feed the "Mine" tab, which the pastor never sees.
   if (!isPastor.value) {
     await loadOutings();
@@ -756,7 +933,9 @@ onMounted(async () => {
   }
 
   await loadEveryoneContacts();
-});
+};
+
+onMounted(reload);
 </script>
 <template>
   <div class="min-h-screen text-white">
@@ -891,7 +1070,7 @@ onMounted(async () => {
          MAIN
     ====================================================== -->
 
-    <main class="mx-auto max-w-7xl px-4 py-6 pb-28 sm:px-6 sm:py-8 lg:px-8">
+    <main id="main" tabindex="-1" class="mx-auto max-w-7xl px-4 py-6 pb-28 sm:px-6 sm:py-8 lg:px-8">
       <!-- TABS -->
 
       <div
@@ -930,6 +1109,101 @@ onMounted(async () => {
       ================================================== -->
 
       <template v-if="activeTab === 'Mine'">
+        <!-- =============================================
+             SEARCH MY CONTACTS
+
+             Outings are how contacts were recorded, not how
+             they are looked for. Someone hunting for one
+             person should not have to remember which evening
+             they met them.
+        ============================================== -->
+
+        <div class="relative mb-4">
+          <span
+            class="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-gray-600"
+          >
+            ⌕
+          </span>
+
+          <input
+            v-model="mineSearch"
+            type="search"
+            placeholder="Search everyone you recorded..."
+            aria-label="Search your contacts"
+            class="field pl-10"
+          />
+        </div>
+
+        <!-- SEARCH RESULTS -->
+
+        <section v-if="mineSearch.trim()" class="mb-6">
+          <p class="mb-2 text-xs text-gray-500">
+            {{ mineResults.length }}
+            {{ mineResults.length === 1 ? "match" : "matches" }}
+          </p>
+
+          <div v-if="mineResults.length" class="space-y-2">
+            <ContactRow
+              v-for="contact in mineResults"
+              :key="`mine-${contact.id}`"
+              :contact="contact"
+              @call="callBack"
+              @edit="openFeedback"
+            />
+          </div>
+
+          <div v-else class="glass-dashed p-8 text-center">
+            <p class="muted">Nobody you recorded matches that.</p>
+          </div>
+        </section>
+
+        <template v-else>
+          <!-- =============================================
+               NEEDS YOUR ATTENTION
+          ============================================== -->
+
+          <section v-if="needsAttention.length" class="mb-6">
+            <button
+              type="button"
+              @click="showAttention = !showAttention"
+              :aria-expanded="showAttention"
+              class="glass-card flex w-full items-center gap-3 p-4 text-left transition hover:bg-white/[0.05]"
+            >
+              <div class="icon-tile h-10 w-10 shrink-0 text-lg">↻</div>
+
+              <div class="min-w-0 flex-1">
+                <h2 class="font-bold">
+                  {{ needsAttention.length }}
+                  {{ needsAttention.length === 1 ? "person needs" : "people need" }}
+                  your attention
+                </h2>
+
+                <p class="muted mt-0.5 text-xs">
+                  Never called, or the phone did not go through.
+                </p>
+              </div>
+
+              <span class="shrink-0 text-gray-600" aria-hidden="true">
+                {{ showAttention ? "▲" : "▼" }}
+              </span>
+            </button>
+
+            <div v-if="showAttention" class="mt-2 space-y-2">
+              <ContactRow
+                v-for="item in needsAttention"
+                :key="`attention-${item.contact.id}`"
+                :contact="item.contact"
+                :reason="item.reason"
+                @call="callBack"
+                @edit="openFeedback"
+              />
+            </div>
+          </section>
+
+          <!-- =============================================
+               MY OUTINGS
+          ============================================== -->
+
         <div v-if="loading" class="space-y-3">
           <div
             v-for="i in 4"
@@ -947,9 +1221,17 @@ onMounted(async () => {
 
         <div
           v-else-if="error"
-          class="rounded-2xl border border-red-500/25 bg-red-500/[0.07] p-5 text-sm text-red-400 backdrop-blur"
+          class="rounded-2xl border border-red-500/25 bg-red-500/[0.07] p-5 backdrop-blur"
         >
-          {{ error }}
+          <p class="text-sm text-red-400">{{ error }}</p>
+
+          <button
+            type="button"
+            @click="reload"
+            class="btn-ghost btn-sm mt-3"
+          >
+            Try again
+          </button>
         </div>
 
         <div v-else-if="filteredOutings.length === 0" class="glass-dashed p-10 text-center">
@@ -988,7 +1270,7 @@ onMounted(async () => {
 
               <div class="min-w-0 flex-1">
                 <h2 class="truncate font-bold">
-                  {{ outing.location }} Centre
+                  {{ centreLabel(outing.location) }} Centre
                 </h2>
 
                 <p class="mt-1 text-xs text-gray-500">
@@ -1015,6 +1297,7 @@ onMounted(async () => {
             </div>
           </button>
         </div>
+        </template>
       </template>
 
       <!-- =================================================
@@ -1026,7 +1309,7 @@ onMounted(async () => {
 
         <section class="glass-card p-4">
           <div class="grid gap-3 lg:grid-cols-12">
-            <div class="relative lg:col-span-5">
+            <div class="relative lg:col-span-4">
               <span
                 class="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-gray-600"
               >
@@ -1041,22 +1324,54 @@ onMounted(async () => {
               />
             </div>
 
-            <select v-model="branchFilter" class="field-select lg:col-span-2">
+            <select
+              v-model="centreFilter"
+              aria-label="Filter by centre"
+              class="field-select lg:col-span-2"
+            >
               <option value="All">All centres</option>
-              <option value="Barnawa">Barnawa</option>
-              <option value="Gbaggivilla">Gbagyivilla</option>
+
+              <option
+                v-for="centre in CENTRES"
+                :key="centre.value"
+                :value="centre.label"
+              >
+                {{ centre.label }}
+              </option>
             </select>
 
-            <select v-model="statusFilter" class="field-select lg:col-span-2">
+            <select
+              v-model="statusFilter"
+              aria-label="Filter by status"
+              class="field-select lg:col-span-2"
+            >
               <option value="All">All status</option>
-              <option value="New">New</option>
-              <option value="Called">Called</option>
-              <option value="Texted">Texted</option>
-              <option value="Following Up">Following Up</option>
-              <option value="Not Reachable">Not Reachable</option>
+
+              <option
+                v-for="status in CONTACT_STATUSES"
+                :key="status"
+                :value="status"
+              >
+                {{ status }}
+              </option>
+
             </select>
 
-            <select v-model="teamFilter" class="field-select lg:col-span-3">
+            <select
+              v-model="textedFilter"
+              aria-label="Filter by texted"
+              class="field-select lg:col-span-2"
+            >
+              <option value="All">Texted &amp; not</option>
+              <option value="Texted">Texted</option>
+              <option value="Not texted">Not texted</option>
+            </select>
+
+            <select
+              v-model="teamFilter"
+              aria-label="Filter by team"
+              class="field-select lg:col-span-2"
+            >
               <option value="All">All teams</option>
               <option value="Sent Ones">Sent Ones</option>
               <option value="Pacesetters">Pacesetters</option>
@@ -1221,12 +1536,29 @@ onMounted(async () => {
               </thead>
 
               <tbody class="divide-y divide-white/[0.05]">
+                <!-- The whole row opens feedback, which is how the
+                     Feedback column stays reachable on a phone. That
+                     needs a tabindex and a key handler, or it is a
+                     control only a mouse can reach. -->
                 <tr
                   v-for="contact in paginatedEveryoneContacts"
                   :key="contact.id"
+                  :tabindex="canEditContact(contact) ? 0 : -1"
+                  :role="canEditContact(contact) ? 'button' : undefined"
+                  :aria-label="
+                    canEditContact(contact)
+                      ? `Edit feedback for ${contact.name}`
+                      : undefined
+                  "
                   @click="canEditContact(contact) && openFeedback(contact)"
+                  @keydown.enter.prevent="
+                    canEditContact(contact) && openFeedback(contact)
+                  "
+                  @keydown.space.prevent="
+                    canEditContact(contact) && openFeedback(contact)
+                  "
                   :class="[
-                    'group transition hover:bg-white/[0.035]',
+                    'group transition hover:bg-white/[0.035] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#D4AF37]',
                     canEditContact(contact) ? 'cursor-pointer' : '',
                   ]"
                 >
@@ -1255,7 +1587,7 @@ onMounted(async () => {
                           <span>{{ contact.phone || "No number" }}</span>
 
                           <span class="lg:hidden">
-                            · {{ contact.branch }}
+                            · {{ contact.centre }}
                           </span>
 
                           <span class="md:hidden">
@@ -1304,15 +1636,21 @@ onMounted(async () => {
                   <td
                     class="hidden truncate px-4 py-3 text-sm text-gray-400 lg:table-cell"
                   >
-                    {{ contact.branch }}
+                    {{ contact.centre }}
                   </td>
 
                   <!-- RECORDED -->
 
                   <td
-                    class="hidden whitespace-nowrap px-4 py-3 text-sm text-gray-400 md:table-cell"
+                    class="hidden whitespace-nowrap px-4 py-3 md:table-cell"
                   >
-                    {{ formatDate(contact.outingDate || contact.created_at) }}
+                    <p class="text-sm text-gray-400">
+                      {{ formatDate(contact.outingDate || contact.created_at) }}
+                    </p>
+
+                    <p class="mt-0.5 text-[11px] text-gray-600">
+                      {{ relativeTime(contact.outingDate || contact.created_at) }}
+                    </p>
                   </td>
 
                   <!-- STATUS -->
@@ -1396,6 +1734,13 @@ onMounted(async () => {
             class="glass-card mt-3 flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
           >
             <p class="text-xs text-gray-500">
+              <span class="font-semibold text-gray-300">
+                {{ filteredEveryoneContacts.length }}
+              </span>
+              {{ filteredEveryoneContacts.length === 1 ? "contact" : "contacts" }}
+
+              <span class="text-gray-700"> · </span>
+
               Page
               <span class="font-semibold text-gray-300">{{ currentPage }}</span>
               of
@@ -1430,12 +1775,14 @@ onMounted(async () => {
          FEEDBACK MODAL
     ====================================================== -->
 
-    <div
-      v-if="showFeedbackModal"
-      class="modal-backdrop"
-      @click.self="closeFeedback"
+    <AppModal
+      :open="showFeedbackModal"
+      :busy="savingFeedback"
+      labelled-by="feedback-modal-title"
+      size="lg"
+      @close="closeFeedback"
     >
-      <div class="glass-panel w-full max-w-lg p-6">
+      <div>
         <div class="flex items-start justify-between gap-4">
           <div class="flex items-center gap-3">
             <div
@@ -1445,13 +1792,20 @@ onMounted(async () => {
             </div>
 
             <div class="min-w-0">
-              <h3 class="truncate text-lg font-bold">
+              <h3
+                id="feedback-modal-title"
+                class="truncate text-lg font-bold"
+              >
                 {{ selectedFeedback?.name }}
               </h3>
 
-              <p class="mt-0.5 text-xs text-gray-500">
-                {{ selectedFeedback?.phone }}
-              </p>
+              <a
+                v-if="selectedFeedback?.phone"
+                :href="getCallLink(selectedFeedback.phone)"
+                class="mt-0.5 block truncate text-xs text-gray-500 transition hover:text-[#D4AF37]"
+              >
+                {{ selectedFeedback.phone }}
+              </a>
             </div>
           </div>
 
@@ -1466,18 +1820,32 @@ onMounted(async () => {
         </div>
 
         <div class="mt-6">
-          <label class="field-label">Follow-up status</label>
+          <label class="field-label">Call outcome</label>
 
           <select
             v-model="feedbackStatus"
             :disabled="savingFeedback"
             class="field-select"
           >
-            <option value="New">New</option>
-            <option value="Called">Called</option>
-            <option value="Following Up">Following Up</option>
-            <option value="Not Reachable">Not Reachable</option>
+            <option
+              v-for="status in CONTACT_STATUSES"
+              :key="status"
+              :value="status"
+            >
+              {{ status }}
+            </option>
           </select>
+
+          <!-- Texted is recorded by the app when a text is sent,
+               so it is shown here but never up for editing. -->
+          <p
+            v-if="selectedFeedback?.texted_at"
+            class="mt-2 flex items-center gap-2 text-[11px] text-gray-600"
+          >
+            <span class="badge-blue px-2 py-0.5">Texted</span>
+
+            <span>Recorded automatically - cannot be edited</span>
+          </p>
         </div>
 
         <div class="mt-5">
@@ -1519,7 +1887,7 @@ onMounted(async () => {
           </button>
         </div>
       </div>
-    </div>
+    </AppModal>
 
     <!-- =====================================================
          MOBILE NAVIGATION

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import { centreLabel } from "../lib/centres";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
 import { getWeekRange, formatWeekLabel } from "../lib/week";
@@ -661,7 +662,7 @@ onMounted(() => {
 
           <div class="min-w-0 flex-1">
             <p class="truncate font-semibold">
-              {{ outing.location }} Centre
+              {{ centreLabel(outing.location) }} Centre
             </p>
 
             <p class="mt-0.5 text-xs text-gray-500">

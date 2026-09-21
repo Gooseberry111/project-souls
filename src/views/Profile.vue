@@ -1,11 +1,13 @@
 <script setup>
 import { onMounted, ref, computed } from "vue";
 import { useRouter } from "vue-router";
+import AppModal from "../components/AppModal.vue";
 import BottomNav from "../components/BottomNav.vue";
 import { useAuthStore } from "../stores/auth";
 import { supabase } from "../lib/supabase";
 import { goBack } from "../lib/navigation";
 import { getWeekRange, formatWeekLabel } from "../lib/week";
+import { toastSuccess } from "../lib/toast";
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -73,6 +75,8 @@ const saveProfile = async () => {
 
     authStore.profile = data;
     editing.value = false;
+
+    toastSuccess("Your details were updated.");
   } catch (error) {
     console.error("Error updating profile:", error);
     saveError.value = error.message || "Unable to update profile.";
@@ -214,7 +218,7 @@ onMounted(() => {
       </div>
     </header>
 
-    <main class="mx-auto max-w-3xl px-4 py-6 pb-28 sm:px-6 sm:py-8">
+    <main id="main" tabindex="-1" class="mx-auto max-w-3xl px-4 py-6 pb-28 sm:px-6 sm:py-8">
       <!-- =================================================
            IDENTITY
 
@@ -439,20 +443,22 @@ onMounted(() => {
          EDIT PROFILE
     ====================================================== -->
 
-    <div
-      v-if="editing"
-      class="modal-backdrop"
-      @click.self="cancelEditing"
-      @keydown.esc="cancelEditing"
+    <AppModal
+      :open="editing"
+      :busy="saving"
+      labelled-by="edit-profile-title"
+      @close="cancelEditing"
     >
-      <div class="glass-panel w-full max-w-md p-6">
+      <div>
         <!-- HEADER -->
 
         <div class="flex items-start justify-between gap-4">
           <div>
             <p class="eyebrow">Account</p>
 
-            <h3 class="mt-1 text-lg font-bold">Edit your details</h3>
+            <h3 id="edit-profile-title" class="mt-1 text-lg font-bold">
+              Edit your details
+            </h3>
           </div>
 
           <button
@@ -527,7 +533,7 @@ onMounted(() => {
           </button>
         </div>
       </div>
-    </div>
+    </AppModal>
 
     <!-- =====================================================
          MOBILE NAVIGATION
