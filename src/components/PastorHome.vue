@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import { describeError, logError } from "../lib/errors";
 import { supabase } from "../lib/supabase";
 import { loadContributorStats } from "../lib/contributors";
 import { getWeekRange, toDateKey, formatWeekLabel } from "../lib/week";
@@ -86,6 +87,7 @@ const followUpGaps = computed(() => [
     value: notCalled.value,
     tone: "green",
     hint: "No call has been placed to these contacts",
+    to: "/follow-up/uncalled",
   },
   {
     key: "texted",
@@ -93,6 +95,7 @@ const followUpGaps = computed(() => [
     value: notTexted.value,
     tone: "blue",
     hint: "No invitation text has been sent",
+    to: "/follow-up/untexted",
   },
   {
     key: "stale",
@@ -100,6 +103,7 @@ const followUpGaps = computed(() => [
     value: staleNew.value,
     tone: "red",
     hint: "Still marked New three days after being recorded",
+    to: "/follow-up/stale",
   },
 ]);
 
@@ -208,9 +212,9 @@ const load = async () => {
 
     contributors.value = await loadContributorStats();
   } catch (err) {
-    console.error("Pastor home error:", err);
+    logError("Pastor home error:", err);
 
-    error.value = err.message || "Unable to load the church overview.";
+    error.value = describeError(err, "Unable to load the church overview.");
   } finally {
     loading.value = false;
   }
@@ -330,7 +334,7 @@ onMounted(() => {
           v-for="gap in followUpGaps"
           :key="gap.key"
           type="button"
-          @click="router.push('/contacts')"
+          @click="router.push(gap.to)"
           class="glass-card-interactive p-5 text-left"
         >
           <div class="flex items-start justify-between gap-3">

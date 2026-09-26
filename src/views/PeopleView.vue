@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BottomNav from "../components/BottomNav.vue";
+import { describeError } from "../lib/errors";
 import { goBack } from "../lib/navigation";
 import { supabase } from "../lib/supabase";
 
@@ -26,7 +27,7 @@ const loadPeople = async () => {
 
     people.value = data || [];
   } catch (err) {
-    error.value = err.message;
+    error.value = describeError(err, "Unable to load people.");
   } finally {
     loading.value = false;
   }

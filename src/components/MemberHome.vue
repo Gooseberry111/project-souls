@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import { describeError, logError } from "../lib/errors";
 import { centreLabel } from "../lib/centres";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
@@ -182,9 +183,9 @@ const load = async () => {
     textedCount.value = texted.count || 0;
     outings.value = recent.data || [];
   } catch (err) {
-    console.error("Member home error:", err);
+    logError("Member home error:", err);
 
-    error.value = err.message || "Unable to load your dashboard.";
+    error.value = describeError(err, "Unable to load your dashboard.");
   } finally {
     loading.value = false;
   }
@@ -285,9 +286,12 @@ onMounted(() => {
       <h3 class="section-title mt-2">Who still needs you</h3>
 
       <div class="mt-5 grid gap-3 sm:grid-cols-3">
+        <!-- Straight to the names. These used to land on the
+             contacts list, which meant opening every outing in
+             turn to work out who was still outstanding. -->
         <button
           type="button"
-          @click="router.push('/contacts')"
+          @click="router.push('/follow-up/uncalled')"
           class="glass-card-interactive p-5 text-left"
         >
           <div class="flex items-start justify-between gap-3">
@@ -301,13 +305,13 @@ onMounted(() => {
           </p>
 
           <p class="mt-2 text-xs leading-5 text-gray-500">
-            Open an outing to call them
+            See who they are and call them →
           </p>
         </button>
 
         <button
           type="button"
-          @click="router.push('/contacts')"
+          @click="router.push('/follow-up/untexted')"
           class="glass-card-interactive p-5 text-left"
         >
           <div class="flex items-start justify-between gap-3">
@@ -321,7 +325,7 @@ onMounted(() => {
           </p>
 
           <p class="mt-2 text-xs leading-5 text-gray-500">
-            Send them the invitation
+            See who they are and text them →
           </p>
         </button>
 

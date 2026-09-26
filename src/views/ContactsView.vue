@@ -4,7 +4,9 @@ import { useRouter } from "vue-router";
 import AppModal from "../components/AppModal.vue";
 import BottomNav from "../components/BottomNav.vue";
 import ContactRow from "../components/ContactRow.vue";
+import { describeError, logError } from "../lib/errors";
 import { CENTRES, centreLabel } from "../lib/centres";
+import { fetchContactsWithContext } from "../lib/contactsData";
 import {
   CONTACT_STATUSES,
   needsAnotherCall,
@@ -148,10 +150,10 @@ const saveFeedback = async () => {
 
     toastSuccess(savedName ? `Saved for ${savedName}.` : "Feedback saved.");
   } catch (err) {
-    console.error("Error saving feedback:", err);
+    logError("Error saving feedback:", err);
 
     feedbackError.value =
-      err.message || "Unable to save feedback. Please try again.";
+      describeError(err, "Unable to save feedback. Please try again.");
   } finally {
     savingFeedback.value = false;
   }
@@ -213,212 +215,37 @@ const formatDate = (date) => {
 };
 
 /* =========================================================
-   LOAD OUTINGS
+   LOAD
+
+   The join itself lives in lib/contactsData.js, shared with the
+   follow-up lists so the two can never disagree about who was
+   called or which centre someone came from.
 ========================================================= */
 
-const loadOutings = async () => {
+const loadAll = async () => {
   loading.value = true;
+  loadingContacts.value = true;
   error.value = "";
 
   try {
-    const { data, error: outingsError } = await supabase
-      .from("evangelism_outings")
-      .select(
-        `
-        id,
-        title,
-        outing_date,
-        location,
-        created_by,
-        created_at
-      `,
-      )
-      .order("outing_date", { ascending: false })
-      .order("created_at", { ascending: false });
+    const data = await fetchContactsWithContext();
 
-    if (outingsError) throw outingsError;
+    outings.value = data.outings.map((outing) => ({
+      ...outing,
 
-    const outingList = data || [];
+      submitterName:
+        outing.created_by === authStore.user?.id
+          ? "You"
+          : outing.submitterName,
+    }));
 
-    const creatorIds = [
-      ...new Set(outingList.map((outing) => outing.created_by).filter(Boolean)),
-    ];
-
-    let profiles = [];
-
-    if (creatorIds.length) {
-      const { data: profileData, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, full_name, team")
-        .in("id", creatorIds);
-
-      if (profileError) throw profileError;
-
-      profiles = profileData || [];
-    }
-
-    const profileMap = Object.fromEntries(
-      profiles.map((profile) => [profile.id, profile]),
-    );
-
-    const outingIds = outingList.map((outing) => outing.id);
-
-    let outingContacts = [];
-
-    if (outingIds.length) {
-      const { data: outingContactData, error: outingContactError } =
-        await supabase
-          .from("outing_contacts")
-          .select("outing_id, contact_id")
-          .in("outing_id", outingIds);
-
-      if (outingContactError) throw outingContactError;
-
-      outingContacts = outingContactData || [];
-    }
-
-    outings.value = outingList.map((outing) => {
-      const profile = profileMap[outing.created_by];
-
-      const contactsCount = outingContacts.filter(
-        (item) => item.outing_id === outing.id,
-      ).length;
-
-      return {
-        ...outing,
-
-        submitterName:
-          profile?.full_name ||
-          (outing.created_by === authStore.user?.id ? "You" : "Member"),
-
-        team: profile?.team || "No team",
-
-        contactsCount,
-      };
-    });
+    everyoneContacts.value = data.contacts;
   } catch (err) {
-    console.error("Error loading outings:", err);
+    logError("Error loading contacts:", err);
 
-    error.value = err.message || "Unable to load outings.";
+    error.value = describeError(err, "Unable to load contacts.");
   } finally {
     loading.value = false;
-  }
-};
-
-/* =========================================================
-   LOAD EVERYONE CONTACTS
-========================================================= */
-
-const loadEveryoneContacts = async () => {
-  loadingContacts.value = true;
-
-  try {
-    const { data, error: contactsError } = await supabase
-      .from("contacts")
-      .select(
-        `
-        id,
-        name,
-        phone,
-        location,
-        notes,
-        status,
-        called_at,
-        texted_at,
-        created_at,
-        added_by
-      `,
-      )
-      .order("created_at", { ascending: false });
-
-    if (contactsError) throw contactsError;
-
-    const contacts = data || [];
-
-    const contactIds = contacts.map((contact) => contact.id);
-
-    let outingLinks = [];
-
-    if (contactIds.length) {
-      const { data: links, error: linksError } = await supabase
-        .from("outing_contacts")
-        .select("contact_id, outing_id")
-        .in("contact_id", contactIds);
-
-      if (linksError) throw linksError;
-
-      outingLinks = links || [];
-    }
-
-    const outingIds = [...new Set(outingLinks.map((link) => link.outing_id))];
-
-    let outingData = [];
-
-    if (outingIds.length) {
-      const { data: outingsData, error: outingsError } = await supabase
-        .from("evangelism_outings")
-        .select("id, location, outing_date")
-        .in("id", outingIds);
-
-      if (outingsError) throw outingsError;
-
-      outingData = outingsData || [];
-    }
-
-    const outingMap = Object.fromEntries(
-      outingData.map((outing) => [outing.id, outing]),
-    );
-
-    const contactOutingMap = {};
-
-    outingLinks.forEach((link) => {
-      contactOutingMap[link.contact_id] = outingMap[link.outing_id];
-    });
-
-    const userIds = [
-      ...new Set(contacts.map((contact) => contact.added_by).filter(Boolean)),
-    ];
-
-    let profiles = [];
-
-    if (userIds.length) {
-      const { data: profileData, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, full_name, team")
-        .in("id", userIds);
-
-      if (profileError) throw profileError;
-
-      profiles = profileData || [];
-    }
-
-    const profileMap = Object.fromEntries(
-      profiles.map((profile) => [profile.id, profile]),
-    );
-
-    everyoneContacts.value = contacts.map((contact) => {
-      const outing = contactOutingMap[contact.id];
-      const profile = profileMap[contact.added_by];
-
-      return {
-        ...contact,
-
-        centre: centreLabel(outing?.location || contact.location),
-
-        outingDate: outing?.outing_date || contact.created_at,
-
-        addedBy: profile?.full_name || "Unknown",
-
-        team: profile?.team || "No Team",
-
-        status: contact.status || "New",
-      };
-    });
-  } catch (err) {
-    console.error("Error loading everyone contacts:", err);
-
-    error.value = err.message || "Unable to load contacts.";
-  } finally {
     loadingContacts.value = false;
   }
 };
@@ -446,6 +273,11 @@ const myContacts = computed(() => {
     (contact) => contact.added_by === authStore.user?.id,
   );
 });
+
+/* Only offer the "No centre" filter when something needs it. */
+const hasUnknownCentre = computed(() =>
+  everyoneContacts.value.some((contact) => contact.centre === "Unknown"),
+);
 
 const mineSearch = ref("");
 
@@ -551,7 +383,7 @@ const callBack = async (contact) => {
 
       contact.called_at = calledAt;
     } catch (err) {
-      console.error("Error recording call:", err);
+      logError("Error recording call:", err);
 
       toastError("The call could not be recorded. Check your connection.");
     }
@@ -910,9 +742,9 @@ const exportContacts = async (scope, filtered) => {
 
     showExportMenu.value = false;
   } catch (err) {
-    console.error("Export error:", err);
+    logError("Export error:", err);
 
-    exportError.value = err.message || "Unable to export contacts.";
+    exportError.value = describeError(err, "Unable to export contacts.");
   } finally {
     exporting.value = false;
   }
@@ -922,18 +754,7 @@ const exportContacts = async (scope, filtered) => {
    MOUNT
 ========================================================= */
 
-const reload = async () => {
-  error.value = "";
-
-  // Outings only feed the "Mine" tab, which the pastor never sees.
-  if (!isPastor.value) {
-    await loadOutings();
-  } else {
-    loading.value = false;
-  }
-
-  await loadEveryoneContacts();
-};
+const reload = loadAll;
 
 onMounted(reload);
 </script>
@@ -1337,6 +1158,13 @@ onMounted(reload);
                 :value="centre.label"
               >
                 {{ centre.label }}
+              </option>
+
+              <!-- Contacts whose outing link is missing. Without
+                   this they matched no centre filter and were
+                   unreachable from this dropdown. -->
+              <option v-if="hasUnknownCentre" value="Unknown">
+                No centre
               </option>
             </select>
 

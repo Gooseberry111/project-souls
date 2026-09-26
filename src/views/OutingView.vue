@@ -5,7 +5,6 @@ import AppModal from "../components/AppModal.vue";
 import BottomNav from "../components/BottomNav.vue";
 import {
   CENTRES,
-  centreAddress,
   centreLabel,
   outingTitleFor,
 } from "../lib/centres";
@@ -14,8 +13,10 @@ import {
   CONTACT_STATUSES,
   statusBadgeClass,
 } from "../lib/contactStatus";
+import { describeError, logError } from "../lib/errors";
 import { goBack } from "../lib/navigation";
-import { getCallLink, normalizePhone } from "../lib/phone";
+import { getSmsLink as buildSmsLink } from "../lib/invitation";
+import { getCallLink } from "../lib/phone";
 import { relativeTime } from "../lib/time";
 import { toastError, toastSuccess } from "../lib/toast";
 import { supabase } from "../lib/supabase";
@@ -45,12 +46,6 @@ const actionError = ref("");
 
 const showFeedbackPrompt = ref(false);
 const feedbackContact = ref(null);
-
-/* Which button opened the prompt. A call asks for its outcome -
-   switched off, no answer, and so on - because that is the whole
-   point of the call. A text does not: "Texted" is recorded on its
-   own and is not an outcome anyone chooses. */
-const feedbackChannel = ref("call");
 
 const promptStatus = ref("Called");
 const promptNotes = ref("");
@@ -101,28 +96,19 @@ const formatDate = (date) => {
    PHONE HELPERS
 ========================================================= */
 
-const buildSmsMessage = (contact) => {
-  /* The outing's centre decides the address, so correcting a
-     centre also corrects every invitation sent afterwards. */
-  const centre =
-    outing.value?.location || contact?.centre || contact?.location || "";
+/* True when this outing has no centre we recognise. The address
+   in the invitation would then be a guess, and guessing sends
+   people to the wrong church - so the UI says so instead. */
+const centreIsUnknown = computed(() => {
+  const location = outing.value?.location;
 
-  return `Good day beloved
+  if (!location) return true;
 
-You are warmly invited to worship with us at Transfiguration Church on SUNDAY by 8am
+  return !CENTRES.some((centre) => centre.value === location);
+});
 
-@ ${centreAddress(centre)}`;
-};
-
-const getSmsLink = (contact) => {
-  const normalized = normalizePhone(contact?.phone);
-
-  if (!normalized) return "#";
-
-  const message = buildSmsMessage(contact);
-
-  return `sms:${normalized}?body=${encodeURIComponent(message)}`;
-};
+const getSmsLink = (contact) =>
+  buildSmsLink(contact?.phone, outing.value?.location);
 
 /* =========================================================
    FEEDBACK PROMPT
@@ -144,13 +130,13 @@ let pendingPrompt = null;
 const flushPendingPrompt = () => {
   if (!pendingPrompt) return;
 
-  const { contact, channel } = pendingPrompt;
+  const { contact } = pendingPrompt;
 
   pendingPrompt = null;
 
   document.removeEventListener("visibilitychange", handleReturn);
 
-  askForFeedback(contact, channel);
+  askForFeedback(contact);
 };
 
 function handleReturn() {
@@ -159,8 +145,8 @@ function handleReturn() {
   }
 }
 
-const promptAfterReturning = (contact, channel) => {
-  pendingPrompt = { contact, channel };
+const promptAfterReturning = (contact) => {
+  pendingPrompt = { contact };
 
   document.addEventListener("visibilitychange", handleReturn);
 
@@ -179,14 +165,13 @@ onUnmounted(() => {
   document.removeEventListener("visibilitychange", handleReturn);
 });
 
-const askForFeedback = (contact, channel = "call") => {
+const askForFeedback = (contact) => {
   if (!contact?.id) return;
 
   // Nothing to ask someone who cannot save the answer.
   if (!canModifyContact(contact)) return;
 
   feedbackContact.value = contact;
-  feedbackChannel.value = channel;
 
   /* A contact still marked New has just been reached, so "Called"
      is the outcome to beat. Anyone already carrying an outcome
@@ -228,13 +213,10 @@ const savePromptFeedback = async () => {
   try {
     const notes = promptNotes.value.trim();
 
-    const changes = { notes: notes || null };
-
-    // A text leaves the outcome alone: it is already recorded in
-    // texted_at, and the person may still be waiting on a call.
-    if (feedbackChannel.value === "call") {
-      changes.status = promptStatus.value;
-    }
+    const changes = {
+      notes: notes || null,
+      status: promptStatus.value,
+    };
 
     const { data, error: updateError } = await supabase
       .from("contacts")
@@ -255,9 +237,9 @@ const savePromptFeedback = async () => {
 
     toastSuccess(`Saved for ${contact.name}.`);
   } catch (err) {
-    console.error("Error saving feedback:", err);
+    logError("Error saving feedback:", err);
 
-    promptError.value = err.message || "Unable to save this feedback.";
+    promptError.value = describeError(err, "Unable to save this feedback.");
   } finally {
     savingPrompt.value = false;
   }
@@ -301,7 +283,7 @@ const handleCall = async (contact) => {
 
       contact.called_at = calledAt;
     } catch (err) {
-      console.error("Error recording call:", err);
+      logError("Error recording call:", err);
 
       toastError("The call could not be recorded. Check your connection.");
     }
@@ -309,7 +291,7 @@ const handleCall = async (contact) => {
 
   window.location.href = link;
 
-  promptAfterReturning(contact, "call");
+  promptAfterReturning(contact);
 };
 
 const handleText = async (contact) => {
@@ -335,7 +317,7 @@ const handleText = async (contact) => {
 
       contact.texted_at = textedAt;
     } catch (err) {
-      console.error("Error recording text:", err);
+      logError("Error recording text:", err);
 
       toastError("The text could not be recorded. Check your connection.");
     }
@@ -343,7 +325,11 @@ const handleText = async (contact) => {
 
   window.location.href = link;
 
-  promptAfterReturning(contact, "text");
+  // No prompt on return. A text is one-way - nothing was said
+  // back, so there is no outcome to record - and texted_at has
+  // already captured that it was sent. Being asked for feedback
+  // after every text was just a dialog to dismiss.
+  toastSuccess(`Invitation sent to ${contact.name}.`);
 };
 
 /* =========================================================
@@ -394,9 +380,9 @@ const loadOuting = async () => {
 
     contacts.value = contactData || [];
   } catch (err) {
-    console.error("Error loading outing:", err);
+    logError("Error loading outing:", err);
 
-    error.value = err.message || "Unable to load outing.";
+    error.value = describeError(err, "Unable to load outing.");
   } finally {
     loading.value = false;
   }
@@ -469,9 +455,9 @@ const saveCentre = async () => {
 
     toastSuccess(`Centre changed to ${centreLabel(centre)}.`);
   } catch (err) {
-    console.error("Error updating centre:", err);
+    logError("Error updating centre:", err);
 
-    centreError.value = err.message || "Unable to change the centre.";
+    centreError.value = describeError(err, "Unable to change the centre.");
   } finally {
     savingCentre.value = false;
   }
@@ -551,9 +537,9 @@ const saveContact = async (contact) => {
 
     toastSuccess(`${name} updated.`);
   } catch (err) {
-    console.error("Error updating contact:", err);
+    logError("Error updating contact:", err);
 
-    actionError.value = err.message || "Unable to update this person.";
+    actionError.value = describeError(err, "Unable to update this person.");
   } finally {
     saving.value = false;
   }
@@ -623,18 +609,18 @@ const saveNewPerson = async () => {
 
     toastSuccess(`${name} added to this outing.`);
   } catch (err) {
-    console.error("Error adding person:", err);
+    logError("Error adding person:", err);
 
     // Do not leave a contact behind that belongs to no outing.
     if (createdId) {
       try {
         await supabase.from("contacts").delete().eq("id", createdId);
       } catch (cleanupError) {
-        console.error("Error cleaning up contact:", cleanupError);
+        logError("Error cleaning up contact:", cleanupError);
       }
     }
 
-    actionError.value = err.message || "Unable to add this person.";
+    actionError.value = describeError(err, "Unable to add this person.");
   } finally {
     addingSaving.value = false;
   }
@@ -700,9 +686,9 @@ const deleteContact = async () => {
 
     toastSuccess(`${contact.name} removed.`);
   } catch (err) {
-    console.error("Error deleting contact:", err);
+    logError("Error deleting contact:", err);
 
-    deleteError.value = err.message || "Unable to delete this person.";
+    deleteError.value = describeError(err, "Unable to delete this person.");
   } finally {
     deleting.value = false;
   }
@@ -864,6 +850,25 @@ onMounted(() => {
           <div v-if="canEdit" class="text-right text-xs text-gray-500">
             You can add people and edit their details
           </div>
+        </div>
+
+        <div
+          v-if="centreIsUnknown"
+          class="mb-6 rounded-2xl border border-[#D4AF37]/30 bg-[#D4AF37]/[0.07] p-4 backdrop-blur"
+        >
+          <p class="text-sm font-semibold text-[#D4AF37]">
+            This outing has no centre set
+          </p>
+
+          <p class="mt-1 text-xs leading-5 text-gray-400">
+            Invitation texts need a centre to know which address to
+            send. Until one is set they will use the Barnawa address,
+            which may be wrong.
+
+            <span v-if="canEdit">
+              Use “Change” at the top to set it.
+            </span>
+          </p>
         </div>
 
         <!-- =================================================
@@ -1267,11 +1272,7 @@ onMounted(() => {
             <p class="eyebrow">Outreach follow-up</p>
 
             <h3 id="feedback-prompt-title" class="mt-1 text-xl font-black">
-              {{
-                feedbackChannel === "call"
-                  ? "How did the call go?"
-                  : "Add feedback now?"
-              }}
+              How did the call go?
             </h3>
 
             <p class="mt-2 text-sm leading-6 text-gray-500">
@@ -1279,14 +1280,8 @@ onMounted(() => {
                 {{ feedbackContact?.name }}
               </span>
 
-              <template v-if="feedbackChannel === 'call'">
-                - pick what happened, and add anything worth
-                remembering.
-              </template>
-
-              <template v-else>
-                has been texted. Did you get any feedback?
-              </template>
+              - pick what happened, and add anything worth
+              remembering.
             </p>
           </div>
 
@@ -1308,7 +1303,7 @@ onMounted(() => {
              in one hand, so the answer should be one tap.
         ================================================== -->
 
-        <div v-if="feedbackChannel === 'call'" class="mt-5">
+        <div class="mt-5">
           <p class="field-label">Outcome</p>
 
           <div class="flex flex-wrap gap-2">

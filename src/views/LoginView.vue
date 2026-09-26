@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from "vue";
 import { useRouter } from "vue-router";
+import { describeError, logError } from "../lib/errors";
 import { useAuthStore } from "../stores/auth";
 
 const router = useRouter();
@@ -33,8 +34,8 @@ const handleLogin = async () => {
     // Existing users go directly to the dashboard
     router.push("/dashboard");
   } catch (err) {
-    console.error("Login error:", err);
-    error.value = err.message || "Unable to sign in.";
+    logError("Login error:", err);
+    error.value = describeError(err, "Unable to sign in.");
   } finally {
     loading.value = false;
   }

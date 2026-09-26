@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BottomNav from "../components/BottomNav.vue";
+import { describeError, logError } from "../lib/errors";
 import { CENTRES } from "../lib/centres";
 import { CONTACT_STATUSES, RETRY_STATUSES } from "../lib/contactStatus";
 import { goBack } from "../lib/navigation";
@@ -145,9 +146,9 @@ const setTeamScope = async (scope) => {
   try {
     await loadTeamStats();
   } catch (err) {
-    console.error("Team stats error:", err);
+    logError("Team stats error:", err);
 
-    error.value = err.message || "Unable to load team statistics.";
+    error.value = describeError(err, "Unable to load team statistics.");
   } finally {
     teamStatsLoading.value = false;
   }
@@ -161,37 +162,42 @@ const setTeamScope = async (scope) => {
 ========================================================= */
 
 const loadCentreStats = async () => {
-  const results = await Promise.all(
-    CENTRES.map(async (centre) => {
-      const { data: outings, error: centreError } = await supabase
-        .from("evangelism_outings")
-        .select("id")
-        .eq("location", centre.value);
+  /* Two whole-table reads joined here, rather than a per-centre
+     query that filtered outing_contacts by a list of outing ids.
+     That list grows with every outing recorded, and once it is
+     long enough the query string exceeds what the gateway will
+     accept and comes back as a bare 400 - which is exactly how
+     the contacts list broke. */
+  const [outingsResult, linksResult] = await Promise.all([
+    supabase.from("evangelism_outings").select("id, location"),
+    supabase.from("outing_contacts").select("outing_id, contact_id"),
+  ]);
 
-      if (centreError) throw centreError;
+  if (outingsResult.error) throw outingsResult.error;
+  if (linksResult.error) throw linksResult.error;
 
-      const outingIds = (outings || []).map((outing) => outing.id);
-
-      if (!outingIds.length) {
-        return { centre: centre.label, contacts: 0 };
-      }
-
-      const { data: relationships, error: relationError } = await supabase
-        .from("outing_contacts")
-        .select("contact_id")
-        .in("outing_id", outingIds);
-
-      if (relationError) throw relationError;
-
-      const uniqueContactIds = new Set(
-        (relationships || []).map((item) => item.contact_id),
-      );
-
-      return { centre: centre.label, contacts: uniqueContactIds.size };
-    }),
+  const centreByOuting = new Map(
+    (outingsResult.data || []).map((outing) => [outing.id, outing.location]),
   );
 
-  centreStats.value = results;
+  /* A Set per centre: one contact met on two outings at the same
+     centre counts once. */
+  const contactsByCentre = new Map(
+    CENTRES.map((centre) => [centre.value, new Set()]),
+  );
+
+  (linksResult.data || []).forEach((link) => {
+    const location = centreByOuting.get(link.outing_id);
+
+    const bucket = contactsByCentre.get(location);
+
+    if (bucket) bucket.add(link.contact_id);
+  });
+
+  centreStats.value = CENTRES.map((centre) => ({
+    centre: centre.label,
+    contacts: contactsByCentre.get(centre.value)?.size || 0,
+  }));
 };
 
 /* =========================================================
@@ -347,9 +353,9 @@ const loadSummary = async () => {
       loadContributors(),
     ]);
   } catch (err) {
-    console.error("Pastor summary error:", err);
+    logError("Pastor summary error:", err);
 
-    error.value = err.message || "Unable to load pastor summary.";
+    error.value = describeError(err, "Unable to load pastor summary.");
   } finally {
     loading.value = false;
   }

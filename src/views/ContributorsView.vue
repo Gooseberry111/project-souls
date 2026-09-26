@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BottomNav from "../components/BottomNav.vue";
+import { describeError, logError } from "../lib/errors";
 import { goBack } from "../lib/navigation";
 import { loadContributorStats } from "../lib/contributors";
 import { getWeekRange, formatWeekLabel } from "../lib/week";
@@ -68,9 +69,9 @@ const load = async () => {
 
     contributors.value = await loadContributorStats();
   } catch (err) {
-    console.error("Contributors error:", err);
+    logError("Contributors error:", err);
 
-    error.value = err.message || "Unable to load contributors.";
+    error.value = describeError(err, "Unable to load contributors.");
   } finally {
     loading.value = false;
   }

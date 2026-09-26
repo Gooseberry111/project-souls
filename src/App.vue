@@ -1,5 +1,20 @@
 <script setup>
+import { watch } from "vue";
 import ToastHost from "./components/ToastHost.vue";
+import { toastError } from "./lib/toast";
+import { useAuthStore } from "./stores/auth";
+
+/* A profile that failed to load leaves someone with no team and
+   no role on a dashboard that can only look broken. Say so. */
+const authStore = useAuthStore();
+
+watch(
+  () => authStore.profileError,
+  (message) => {
+    if (message) toastError(message);
+  },
+  { immediate: true },
+);
 </script>
 
 <template>

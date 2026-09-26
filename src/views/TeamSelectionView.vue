@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from "vue";
 import { useRouter } from "vue-router";
+import { describeError } from "../lib/errors";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../stores/auth";
 
@@ -57,7 +58,7 @@ const confirmTeam = async () => {
 
     router.push("/dashboard");
   } catch (err) {
-    error.value = err.message;
+    error.value = describeError(err, "Unable to save your team.");
   } finally {
     loading.value = false;
   }

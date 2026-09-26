@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import { logError } from "../lib/errors";
 import { useAuthStore } from "../stores/auth";
 import { supabase } from "../lib/supabase";
 import { getWeekRange } from "../lib/week";
@@ -85,7 +86,7 @@ const loadTeamRankings = async () => {
 
     teamRankings.value = rankings.sort((a, b) => b.count - a.count);
   } catch (error) {
-    console.error("Error loading team rankings:", error);
+    logError("Error loading team rankings:", error);
   }
 };
 

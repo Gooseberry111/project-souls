@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BottomNav from "../components/BottomNav.vue";
+import { describeError, logError } from "../lib/errors";
 import { CENTRES, centreLabel } from "../lib/centres";
 import { toastError, toastSuccess } from "../lib/toast";
 import { goBack } from "../lib/navigation";
@@ -62,8 +63,8 @@ const loadFirstTimers = async () => {
 
     firstTimers.value = data || [];
   } catch (err) {
-    console.error("First timers error:", err);
-    error.value = err.message || "Unable to load first timers.";
+    logError("First timers error:", err);
+    error.value = describeError(err, "Unable to load first timers.");
   } finally {
     loading.value = false;
   }
@@ -150,8 +151,8 @@ const saveFirstTimers = async () => {
 
     await loadFirstTimers();
   } catch (err) {
-    console.error("Save first timers error:", err);
-    error.value = err.message || "Unable to save first timers.";
+    logError("Save first timers error:", err);
+    error.value = describeError(err, "Unable to save first timers.");
 
     toastError(error.value);
   } finally {

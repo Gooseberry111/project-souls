@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from "vue";
 import { useRouter } from "vue-router";
+import { describeError } from "../lib/errors";
 import { useAuthStore } from "../stores/auth";
 
 const router = useRouter();
@@ -29,7 +30,7 @@ const handleSignup = async () => {
 
     router.push("/login");
   } catch (err) {
-    error.value = err.message;
+    error.value = describeError(err, "Unable to create your account.");
   } finally {
     loading.value = false;
   }

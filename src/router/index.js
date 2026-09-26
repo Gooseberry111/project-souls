@@ -47,6 +47,13 @@ const routes = [
     path: "/contacts",
     component: () => import("../views/ContactsView.vue"),
   },
+
+  /* The names behind a dashboard number: /follow-up/uncalled,
+     /follow-up/untexted, /follow-up/stale. */
+  {
+    path: "/follow-up/:kind?",
+    component: () => import("../views/FollowUpView.vue"),
+  },
   {
     path: "/pastor",
     component: () => import("../views/PastorView.vue"),

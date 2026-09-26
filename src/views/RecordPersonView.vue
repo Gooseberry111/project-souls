@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import AppModal from "../components/AppModal.vue";
 import BottomNav from "../components/BottomNav.vue";
+import { describeError, logError } from "../lib/errors";
 import { CENTRES, centreLabel, outingTitleFor } from "../lib/centres";
 import { goBack } from "../lib/navigation";
 import { phoneVariants, samePhone } from "../lib/phone";
@@ -157,7 +158,7 @@ const handleSubmit = async (options = {}) => {
       }
     } catch (err) {
       // A failed lookup must not block recording an outing.
-      console.error("Duplicate check failed:", err);
+      logError("Duplicate check failed:", err);
     } finally {
       checkingDuplicates.value = false;
     }
@@ -166,6 +167,11 @@ const handleSubmit = async (options = {}) => {
   duplicateWarning.value = null;
 
   loading.value = true;
+
+  /* Tracked so a failure part-way through does not leave records
+     behind. See the cleanup in the catch below. */
+  let createdOutingId = null;
+  let createdContactIds = [];
 
   try {
     // Create outing
@@ -181,6 +187,8 @@ const handleSubmit = async (options = {}) => {
       .single();
 
     if (outingError) throw outingError;
+
+    createdOutingId = outing.id;
 
     // Create contacts
     const contactsToInsert = people.value.map((person) => ({
@@ -198,6 +206,8 @@ const handleSubmit = async (options = {}) => {
 
     if (contactsError) throw contactsError;
 
+    createdContactIds = (contacts || []).map((contact) => contact.id);
+
     // Connect contacts to outing
     const outingContacts = contacts.map((contact) => ({
       outing_id: outing.id,
@@ -210,6 +220,10 @@ const handleSubmit = async (options = {}) => {
 
     if (outingContactsError) throw outingContactsError;
 
+    // Saved and linked: nothing left to roll back.
+    createdContactIds = [];
+    createdOutingId = null;
+
     toastSuccess(
       `${contacts.length} ${
         contacts.length === 1 ? "person" : "people"
@@ -218,9 +232,43 @@ const handleSubmit = async (options = {}) => {
 
     router.push("/dashboard");
   } catch (err) {
-    error.value = err.message;
+    logError("Error saving outing:", err);
 
-    toastError(err.message || "Could not save this outing.");
+    /* Contacts are inserted before they are linked to the outing,
+       so a failure in between would leave people in the table
+       belonging to no outing. Those orphans then show up in every
+       count with no centre and no way to reach them, so they are
+       cleaned up here - the same thing OutingView does when
+       adding one person fails. */
+    if (createdContactIds.length) {
+      try {
+        await supabase
+          .from("outing_contacts")
+          .delete()
+          .in("contact_id", createdContactIds);
+
+        await supabase.from("contacts").delete().in("id", createdContactIds);
+      } catch (cleanupError) {
+        logError("Could not clean up half-saved contacts:", cleanupError);
+      }
+    }
+
+    if (createdOutingId) {
+      try {
+        await supabase
+          .from("evangelism_outings")
+          .delete()
+          .eq("id", createdOutingId);
+      } catch (cleanupError) {
+        logError("Could not clean up the half-saved outing:", cleanupError);
+      }
+    }
+
+    const message = describeError(err, "Could not save this outing.");
+
+    error.value = message;
+
+    toastError(message);
   } finally {
     loading.value = false;
   }

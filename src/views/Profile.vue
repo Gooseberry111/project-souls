@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import AppModal from "../components/AppModal.vue";
 import BottomNav from "../components/BottomNav.vue";
 import { useAuthStore } from "../stores/auth";
+import { describeError, logError } from "../lib/errors";
 import { supabase } from "../lib/supabase";
 import { goBack } from "../lib/navigation";
 import { getWeekRange, formatWeekLabel } from "../lib/week";
@@ -78,8 +79,8 @@ const saveProfile = async () => {
 
     toastSuccess("Your details were updated.");
   } catch (error) {
-    console.error("Error updating profile:", error);
-    saveError.value = error.message || "Unable to update profile.";
+    logError("Error updating profile:", error);
+    saveError.value = describeError(error, "Unable to update profile.");
   } finally {
     saving.value = false;
   }
@@ -178,7 +179,7 @@ const loadStats = async () => {
     textedContacts.value = texted.count || 0;
     totalOutings.value = outings.count || 0;
   } catch (error) {
-    console.error("Error loading profile stats:", error);
+    logError("Error loading profile stats:", error);
   } finally {
     loadingContacts.value = false;
   }

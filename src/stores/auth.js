@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { describeError, logError } from "../lib/errors";
 import { supabase } from "../lib/supabase";
 
 export const useAuthStore = defineStore("auth", {
@@ -6,6 +7,13 @@ export const useAuthStore = defineStore("auth", {
     user: null,
     profile: null,
     loading: true,
+
+    /* Set when the profile could not be created or read. Without
+       a profile there is no team and no role, so the app cannot
+       work - and this used to fail silently, dropping people on
+       a dashboard that showed them nothing and explained
+       nothing. */
+    profileError: "",
   }),
 
   actions: {
@@ -27,6 +35,7 @@ export const useAuthStore = defineStore("auth", {
           await this.ensureProfile();
         } else {
           this.profile = null;
+          this.profileError = "";
         }
       });
 
@@ -43,7 +52,7 @@ export const useAuthStore = defineStore("auth", {
         .maybeSingle();
 
       if (error) {
-        console.error("Profile lookup error:", error);
+        logError("Profile lookup error:", error);
         return;
       }
 
@@ -94,11 +103,18 @@ export const useAuthStore = defineStore("auth", {
         .single();
 
       if (createError) {
-        console.error("Profile creation error:", createError);
+        logError("Profile creation error:", createError);
+
+        this.profileError = describeError(
+          createError,
+          "Your account was created but your profile could not be set up. Please sign out and in again, or ask an admin.",
+        );
+
         return;
       }
 
       this.profile = newProfile;
+      this.profileError = "";
     },
 
     async fetchProfile() {
@@ -111,7 +127,7 @@ export const useAuthStore = defineStore("auth", {
         .maybeSingle();
 
       if (error) {
-        console.error("Profile fetch error:", error);
+        logError("Profile fetch error:", error);
         return;
       }
 
