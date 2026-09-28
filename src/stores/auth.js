@@ -63,7 +63,15 @@ export const useAuthStore = defineStore("auth", {
 
       /*
        * SPECIAL EMAILS
-       * Replace these with the real church emails.
+       *
+       * These do NOT grant access. The set_profile_role trigger
+       * overrides whatever this sends, because anything decided
+       * in the browser can be edited from the console - which is
+       * the whole point of the trigger. Editing this list alone
+       * makes nobody a pastor or coordinator.
+       *
+       * To actually grant it, update the profile row AND the
+       * trigger's list - see supabase/add-coordinators.sql.
        */
 
       const pastorEmails = ["kelvinherogod@gmail.com"];
